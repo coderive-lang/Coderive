@@ -1,12 +1,14 @@
 # Cross-language benchmark suite
 
-This benchmark compares **Coderive** against:
+This benchmark compares:
 
 - Java
 - C
 - C++
 - Rust
 - Python
+
+The Coderive benchmark now lives in `src/main/cod/demo/src/main/test/loop/BMark.cod`.
 
 ## Workload
 

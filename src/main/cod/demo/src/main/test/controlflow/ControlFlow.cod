@@ -17,8 +17,8 @@ share ControlFlow {
 
         out("sum=" + sum)
 
-        out("fin:before")
-        fin
-        out("fin:after-should-not-print")
+        out("exit:before")
+        exit
+        out("exit:after-should-not-print")
     }
 }

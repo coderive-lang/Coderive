@@ -1,34 +1,18 @@
 package cod.interpreter;
 
-import cod.error.ProgramError;
 import cod.debug.DebugSystem;
 import cod.ir.IRManager;
-import cod.lexer.*;
-import static cod.lexer.TokenType.*;
-import static cod.lexer.TokenType.Symbol.*;
-import static cod.lexer.TokenType.Keyword.*;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
  * Index file for Coderive units.
  * Stores classname → filename mappings for O(1) import resolution.
  * 
+ * NOW PROGRESSIVE: Index entries are added as files are parsed, not pre-scanned.
+ * 
  * File format (preferred): {projectRoot}/src/bin/project.codc -> HOOK.toml
- * 
- * Example:
- * # unit sample
- * timestamp = "1700000000000"
- * generator = "Coderive 1.0"
- * 
- * [classes]
- * Imported = "Imported.cod"
- * Helper = "Imported.cod"
- * Database = "Core.cod"
- * 
- * @since 1.0
  */
 public final class Index {
     
@@ -41,6 +25,9 @@ public final class Index {
     private long timestamp;
     private String generator;
     private final Map<String, String> classes;
+    
+    // Track parsed files to avoid re-parsing
+    private final Set<String> parsedFiles = new HashSet<String>();
     
     // Project root - set once when we have srcMainRoot
     private static String projectRoot;
@@ -123,6 +110,71 @@ public final class Index {
         }
     }
     
+    // ========== PROGRESSIVE INDEX METHODS ==========
+    
+    /**
+     * Add a class mapping from parsed file (no directory scan!)
+     */
+    public void add(String className, String fileName) {
+        if (className == null || className.trim().isEmpty()) {
+            throw new IllegalArgumentException("Class name cannot be null or empty");
+        }
+        if (fileName == null || fileName.trim().isEmpty()) {
+            throw new IllegalArgumentException("File name cannot be null or empty");
+        }
+        classes.put(className, fileName);
+        parsedFiles.add(fileName);
+        touch();
+    }
+    
+    /**
+     * Add multiple class mappings at once
+     */
+    public void addAll(Map<String, String> mappings) {
+        if (mappings != null) {
+            for (Map.Entry<String, String> entry : mappings.entrySet()) {
+                add(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+    
+    /**
+     * Mark a file as parsed (to avoid re-parsing)
+     */
+    public void markParsed(String fileName) {
+        if (fileName != null && !fileName.isEmpty()) {
+            parsedFiles.add(fileName);
+        }
+    }
+    
+    /**
+     * Check if file already parsed
+     */
+    public boolean isFileParsed(String fileName) {
+        return fileName != null && parsedFiles.contains(fileName);
+    }
+    
+    /**
+     * Merge index entries from another index (for progressive loading)
+     */
+    public void merge(Index other) {
+        if (other == null) return;
+        if (!this.unit.equals(other.unit)) {
+            throw new IllegalArgumentException("Cannot merge indexes from different units");
+        }
+        this.classes.putAll(other.classes);
+        this.parsedFiles.addAll(other.parsedFiles);
+        this.timestamp = Math.max(this.timestamp, other.timestamp);
+    }
+    
+    /**
+     * Refresh from parsed files only (no directory scan)
+     */
+    public boolean refresh() {
+        this.timestamp = System.currentTimeMillis();
+        return !classes.isEmpty();
+    }
+    
     /**
      * Loads an index from disk.
      * 
@@ -145,7 +197,7 @@ public final class Index {
         }
 
         Index index = new Index(unitName, doc.timestamp, doc.generator);
-        index.classes.putAll(unitMappings);
+        index.addAll(unitMappings);
         return index;
     }
     
@@ -155,49 +207,25 @@ public final class Index {
      * @return true if saved successfully, false otherwise
      */
     public boolean save() {
-        if (projectRoot == null) {
-            return false;
-        }
-
-        IndexDocument merged = loadExistingDocument(unit);
-        merged.timestamp = timestamp;
-        merged.generator = (generator == null || generator.isEmpty()) ? DEFAULT_GENERATOR : generator;
-        merged.unitMappings.put(unit, new HashMap<String, String>(classes));
-
-        String documentText = writeDocumentText(merged);
-
-        IRManager manager = new IRManager(projectRoot);
-        try {
-            manager.saveIndex(unit, documentText);
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
+    if (projectRoot == null) {
+        return false;
     }
-    
-    /**
-     * Adds a class mapping.
-     */
-    public Index add(String className, String fileName) {
-        if (className == null || className.trim().isEmpty()) {
-            throw new IllegalArgumentException("Class name cannot be null or empty");
-        }
-        if (fileName == null || fileName.trim().isEmpty()) {
-            throw new IllegalArgumentException("File name cannot be null or empty");
-        }
-        classes.put(className, fileName);
-        return this;
+
+    IndexDocument merged = loadExistingDocument(unit);
+    merged.timestamp = timestamp;
+    merged.generator = (generator == null || generator.isEmpty()) ? DEFAULT_GENERATOR : generator;
+    merged.unitMappings.put(unit, new HashMap<String, String>(classes));
+
+    String documentText = writeDocumentText(merged);
+
+    IRManager manager = new IRManager(projectRoot);
+    try {
+        manager.saveIndex(unit, documentText);
+        return true;
+    } catch (Exception e) {
+        return false;
     }
-    
-    /**
-     * Adds multiple class mappings from a map.
-     */
-    public Index addAll(Map<String, String> mappings) {
-        if (mappings != null) {
-            classes.putAll(mappings);
-        }
-        return this;
-    }
+}
     
     /**
      * Gets the file name for a class.
@@ -255,6 +283,7 @@ public final class Index {
      */
     public void clear() {
         classes.clear();
+        parsedFiles.clear();
         timestamp = System.currentTimeMillis();
     }
     
@@ -267,6 +296,7 @@ public final class Index {
     
     /**
      * Checks if this index is stale relative to the unit directory.
+     * Now uses parsed files set instead of scanning.
      */
     public boolean isStale(String unitPath) {
         if (unitPath == null || unitPath.isEmpty()) {
@@ -278,216 +308,18 @@ public final class Index {
             return true;
         }
         
-        // Check if all indexed files still exist
+        // Check if any parsed file is missing or modified
         for (String fileName : classes.values()) {
             File classFile = new File(dir, fileName);
             if (!classFile.exists()) {
                 return true;
             }
-        }
-        
-        long lastModified = 0;
-        File[] files = dir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.endsWith(".cod");
-            }
-        });
-        
-        if (files != null) {
-            for (File file : files) {
-                long mod = file.lastModified();
-                if (mod > lastModified) {
-                    lastModified = mod;
-                }
+            if (classFile.lastModified() > timestamp) {
+                return true;
             }
         }
         
-        // Check if number of files changed
-        if (files != null && files.length != classes.size()) {
-            return true;
-        }
-        
-        return timestamp < lastModified;
-    }
-    
-    /**
-     * Extracts class names from a .cod file using the lexer.
-     */
-    private static List<String> extractClassNames(File file) {
-        List<String> classNames = new ArrayList<String>();
-        
-        try {
-            String content = readFileToString(file);
-            MainLexer lexer = new MainLexer(content);
-            List<Token> tokens = lexer.tokenize();
-            
-            int braceDepth = 0;
-            
-            for (int i = 0; i < tokens.size(); i++) {
-                Token t = tokens.get(i);
-                
-                // Track brace depth
-                if (t.isSymbol(LBRACE)) {
-                    braceDepth++;
-                } else if (t.isSymbol(RBRACE)) {
-                    braceDepth--;
-                }
-                
-                // Look for class definitions at depth 0
-                if (braceDepth == 0 && t.type == ID) {
-                    // Look ahead for {
-                    int nextPos = i + 1;
-                    // Skip whitespace
-                    while (nextPos < tokens.size() && 
-                           tokens.get(nextPos).type == WS) {
-                        nextPos++;
-                    }
-                    
-                    // Also skip visibility modifiers (share, local)
-                    while (nextPos < tokens.size() && 
-                           (tokens.get(nextPos).isKeyword(SHARE) || tokens.get(nextPos).isKeyword(LOCAL))) {
-                        nextPos++;
-                        // Skip whitespace after modifier
-                        while (nextPos < tokens.size() && 
-                               tokens.get(nextPos).type == WS) {
-                            nextPos++;
-                        }
-                    }
-                    
-                    // Check if next token is {
-                    if (nextPos < tokens.size() && 
-                        tokens.get(nextPos).isSymbol(LBRACE)) {
-                        String className = t.getText();
-                        
-                        // Class names start with uppercase
-                        if (!className.isEmpty() && 
-                            Character.isUpperCase(className.charAt(0))) {
-                            if (!classNames.contains(className)) {
-                                classNames.add(className);
-                            }
-                        }
-                    }
-                }
-            }
-            
-        } catch (Exception e) {
-            // Fallback to filename
-            String fileName = file.getName();
-            String fallback = fileName.substring(0, fileName.length() - 4);
-            classNames.add(fallback);
-        }
-        
-        return classNames;
-    }
-    
-    /**
-     * Refreshes this index by scanning the unit directory.
-     * Validates that no duplicate class names exist within the unit.
-     * 
-     * @return true if the index was updated, false otherwise
-     * @throws IllegalStateException if duplicate class names are found
-     */
-    public boolean refresh(String unitPath) {
-        if (unitPath == null || unitPath.isEmpty()) {
-            return false;
-        }
-        
-        File dir = new File(unitPath);
-        if (!dir.exists() || !dir.isDirectory()) {
-            return false;
-        }
-        
-        Map<String, String> newMappings = new HashMap<String, String>();
-        Map<String, List<String>> duplicateTracker = new HashMap<String, List<String>>();
-        
-        File[] files = dir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.endsWith(".cod");
-            }
-        });
-        
-        if (files == null) {
-            return false;
-        }
-        
-        // First pass: collect all classes and detect duplicates
-        for (File file : files) {
-            String fileName = file.getName();
-            
-            // Skip index file itself
-            String baseName = fileName.substring(0, fileName.length() - 4);
-            if ("index".equals(baseName)) {
-                continue;
-            }
-            
-            // Extract class names using lexer
-            List<String> classNames = extractClassNames(file);
-            
-            for (String className : classNames) {
-                if (newMappings.containsKey(className)) {
-                    // Duplicate found!
-                    List<String> duplicates = duplicateTracker.get(className);
-                    if (duplicates == null) {
-                        duplicates = new ArrayList<String>();
-                        duplicates.add(newMappings.get(className));
-                        duplicateTracker.put(className, duplicates);
-                    }
-                    duplicates.add(fileName);
-                } else {
-                    newMappings.put(className, fileName);
-                }
-            }
-        }
-        
-        // If duplicates found, throw error with details
-        if (!duplicateTracker.isEmpty()) {
-            StringBuilder errorMsg = new StringBuilder();
-            errorMsg.append("Duplicate class names found in unit '").append(unit).append("':\n");
-            errorMsg.append("Each class name must be unique within a unit.\n\n");
-            
-            for (Map.Entry<String, List<String>> entry : duplicateTracker.entrySet()) {
-                String className = entry.getKey();
-                List<String> filesWithClass = entry.getValue();
-                errorMsg.append("  Class '").append(className).append("' appears in:\n");
-                for (String fileName : filesWithClass) {
-                    errorMsg.append("    - ").append(fileName).append("\n");
-                }
-            }
-            
-            errorMsg.append("\nRename or remove duplicate classes to continue.");
-            
-            throw new ProgramError(errorMsg.toString());
-        }
-        
-        if (newMappings.isEmpty()) {
-            return false;
-        }
-        
-        classes.clear();
-        classes.putAll(newMappings);
-        timestamp = System.currentTimeMillis();
-        
-        return true;
-    }
-    
-    // ========== Getters ==========
-    
-    public String getUnit() {
-        return unit;
-    }
-    
-    public long getTimestamp() {
-        return timestamp;
-    }
-    
-    public String getGenerator() {
-        return generator;
-    }
-    
-    public Map<String, String> getMappings() {
-        return Collections.unmodifiableMap(classes);
+        return false;
     }
     
     // ========== Private Helpers ==========
@@ -602,27 +434,13 @@ public final class Index {
             this.unitMappings = unitMappings;
         }
     }
-     
-    private static String readFileToString(File file) throws IOException {
-        StringBuilder content = new StringBuilder();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8));
-        try {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append("\n");
-            }
-        } finally {
-            reader.close();
-        }
-        return content.toString();
-    }
     
     // ========== Object Methods ==========
     
     @Override
     public String toString() {
-        return String.format("Index{unit='%s', classes=%d, timestamp=%d}", 
-                             unit, classes.size(), timestamp);
+        return String.format("Index{unit='%s', classes=%d, parsedFiles=%d, timestamp=%d}", 
+                             unit, classes.size(), parsedFiles.size(), timestamp);
     }
     
     @Override

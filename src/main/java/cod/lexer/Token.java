@@ -6,22 +6,66 @@ import java.util.List;
 import java.util.ArrayList;
 
 public class Token {
-    public final TokenType type;
-    public final char[] source;
-    public final int start;
-    public final int length;
-    public final int line;
-    public final int column;
-    public final Symbol symbol;
-    public final Keyword keyword;
-    public final List<Token> childTokens;
-    public final String fileName;
+    // Non-final to allow pooling reuse - direct access, no getters/setters
+    public TokenType type;
+    public char[] source;
+    public int start;
+    public int length;
+    public int line;
+    public int column;
+    public Symbol symbol;
+    public Keyword keyword;
+    public List<Token> childTokens;
+    public String fileName;
 
-    // Cached text for when string is actually needed (lazy)
+    // Cached text (lazy)
     private transient String cachedText = null;
+    private transient int cachedHash = 0;
+    
+    // Pooling support
+    private static final TokenPool POOL = new TokenPool(1024);
+    private boolean pooled = false;
+    
+    // Singleton for empty whitespace
+    public static final Token EMPTY_WHITESPACE = new Token(
+        TokenType.WS, new char[0], 0, 0, 0, 0, null, null, null, null, false);
+    
+    // ThreadLocal StringBuilder for Java 7
+    private static final ThreadLocal<StringBuilder> TEXT_BUILDER = new ThreadLocal<StringBuilder>() {
+        @Override
+        protected StringBuilder initialValue() {
+            return new StringBuilder(64);
+        }
+    };
 
-    // === SINGLE CONSTRUCTOR (Zero-Copy) ===
-
+    // === CONSTRUCTORS ===
+    
+    private Token(
+        TokenType type,
+        char[] source,
+        int start,
+        int length,
+        int line,
+        int column,
+        Symbol symbol,
+        Keyword keyword,
+        List<Token> childTokens,
+        String fileName,
+        boolean pooled) {
+        this.type = type;
+        this.source = source;
+        this.start = start;
+        this.length = length;
+        this.line = line;
+        this.column = column;
+        this.symbol = symbol;
+        this.keyword = keyword;
+        this.childTokens = childTokens != null ? childTokens : new ArrayList<Token>();
+        this.fileName = fileName;
+        this.pooled = pooled;
+    }
+    
+    // Public constructor (non-pooled)
     public Token(
         TokenType type,
         char[] source,
@@ -33,19 +77,10 @@ public class Token {
         Keyword keyword,
         List<Token> childTokens,
         String fileName) {
-        this.type = type;
-        this.source = source;
-        this.start = start;
-        this.length = length;
-        this.line = line;
-        this.column = column;
-        this.symbol = symbol;
-        this.keyword = keyword;
-        this.childTokens = childTokens != null ? childTokens : new ArrayList<Token>();
-        this.fileName = fileName;
+        this(type, source, start, length, line, column, symbol, keyword, childTokens, fileName, false);
     }
-
-    // Legacy constructor for backward compatibility (converts String to char[])
+    
+    // Legacy constructor
     public Token(
         TokenType type,
         String text,
@@ -68,14 +103,133 @@ public class Token {
             fileName);
     }
 
-    // === FAST ACCESS METHODS (Zero-Copy) ===
+    // === FACTORY METHODS WITH POOLING ===
+    
+    public static Token createPooled(
+        TokenType type,
+        char[] source,
+        int start,
+        int length,
+        int line,
+        int column,
+        Symbol symbol,
+        Keyword keyword,
+        List<Token> childTokens,
+        String fileName) {
+        
+        // Don't pool whitespace or comments
+        if (type == TokenType.WS || type == TokenType.LINE_COMMENT || type == TokenType.BLOCK_COMMENT) {
+            return new Token(type, source, start, length, line, column, symbol, keyword, childTokens, fileName);
+        }
+        
+        Token token = POOL.acquire();
+        if (token != null) {
+            token.reinit(type, source, start, length, line, column, symbol, keyword, childTokens, fileName);
+            return token;
+        }
+        return new Token(type, source, start, length, line, column, symbol, keyword, childTokens, fileName);
+    }
+    
+    public void reinit(
+        TokenType type,
+        char[] source,
+        int start,
+        int length,
+        int line,
+        int column,
+        Symbol symbol,
+        Keyword keyword,
+        List<Token> childTokens,
+        String fileName) {
+        this.type = type;
+        this.source = source;
+        this.start = start;
+        this.length = length;
+        this.line = line;
+        this.column = column;
+        this.symbol = symbol;
+        this.keyword = keyword;
+        this.childTokens.clear();
+        if (childTokens != null) this.childTokens.addAll(childTokens);
+        this.fileName = fileName;
+        this.cachedText = null;
+        this.cachedHash = 0;
+        this.pooled = true;
+    }
+    
+    public void release() {
+        if (pooled) {
+            POOL.release(this);
+        }
+    }
+    
+    public static Token createWhitespace(char[] source, int start, int length, int line, int column) {
+        if (length == 0) return EMPTY_WHITESPACE;
+        return new Token(TokenType.WS, source, start, length, line, column, null, null, null, null);
+    }
+    
+    public static Token createKeyword(char[] source, int start, int length, int line, int column, Keyword keyword) {
+        return createPooled(TokenType.KEYWORD, source, start, length, line, column, null, keyword, null, null);
+    }
+    
+    public static Token createSymbol(char[] source, int start, int length, int line, int column, Symbol symbol) {
+        return createPooled(TokenType.SYMBOL, source, start, length, line, column, symbol, null, null, null);
+    }
+    
+    public static Token createIdentifier(char[] source, int start, int length, int line, int column) {
+        return createPooled(TokenType.ID, source, start, length, line, column, null, null, null, null);
+    }
+    
+    public static Token createNumber(char[] source, int start, int length, boolean isFloat, int line, int column) {
+        return createPooled(isFloat ? TokenType.FLOAT_LIT : TokenType.INT_LIT,
+                source, start, length, line, column, null, null, null, null);
+    }
+    
+    public static Token createTextLiteral(char[] source, int start, int length, int line, int column) {
+        return new Token(TokenType.TEXT_LIT, source, start, length, line, column, null, null, null, null);
+    }
+    
+    public static Token createInterpolation(int line, int column, List<Token> childTokens) {
+        return new Token(TokenType.INTERPOL, new char[0], 0, 0, line, column, null, null, childTokens, null);
+    }
+    
+    public static Token createEOF(int line, int column) {
+        return new Token(TokenType.EOF, new char[0], 0, 0, line, column, null, null, null, null);
+    }
+    
+    // Legacy factories
+    public static Token createKeyword(String text, int line, int column, Keyword keyword) {
+        char[] chars = text.toCharArray();
+        return createKeyword(chars, 0, chars.length, line, column, keyword);
+    }
+    
+    public static Token createSymbol(String text, int line, int column, Symbol symbol) {
+        char[] chars = text.toCharArray();
+        return createSymbol(chars, 0, chars.length, line, column, symbol);
+    }
+    
+    public static Token createIdentifier(String text, int line, int column) {
+        char[] chars = text.toCharArray();
+        return createIdentifier(chars, 0, chars.length, line, column);
+    }
+    
+    public static Token createNumber(String text, boolean isFloat, int line, int column) {
+        char[] chars = text.toCharArray();
+        return createNumber(chars, 0, chars.length, isFloat, line, column);
+    }
+    
+    public static Token createTextLiteral(String text, int line, int column) {
+        char[] chars = text.toCharArray();
+        return createTextLiteral(chars, 0, chars.length, line, column);
+    }
 
+    // === FAST ACCESS METHODS ===
+    
     public String getText() {
         if (cachedText == null && length > 0) {
             if (type == TokenType.TEXT_LIT && length >= 2) {
                 int end = start + length - 1;
-                if (length >= 4 &&
-                    source[start] == '|' && source[start + 1] == '"' &&
+                if (length >= 4 && source[start] == '|' && source[start + 1] == '"' &&
                     source[end - 1] == '"' && source[end] == '|') {
                     cachedText = new String(source, start + 2, length - 4);
                 } else if (source[start] == '"' && source[end] == '"') {
@@ -89,13 +243,29 @@ public class Token {
         }
         return cachedText != null ? cachedText : "";
     }
-
-    // O(1) length check - no string creation
-    public int getLength() {
-        return length;
+    
+    public String getTextReusingBuilder() {
+        if (cachedText != null) return cachedText;
+        if (length == 0) return "";
+        StringBuilder sb = TEXT_BUILDER.get();
+        sb.setLength(0);
+        if (type == TokenType.TEXT_LIT && length >= 2) {
+            int end = start + length - 1;
+            if (length >= 4 && source[start] == '|' && source[start + 1] == '"' &&
+                source[end - 1] == '"' && source[end] == '|') {
+                sb.append(source, start + 2, length - 4);
+            } else if (source[start] == '"' && source[end] == '"') {
+                sb.append(source, start + 1, length - 2);
+            } else {
+                sb.append(source, start, length);
+            }
+        } else {
+            sb.append(source, start, length);
+        }
+        cachedText = sb.toString();
+        return cachedText;
     }
-
-    // Fast equality without creating string
+    
     public boolean matches(String s) {
         if (s == null) return false;
         if (s.length() != length) return false;
@@ -104,8 +274,11 @@ public class Token {
         }
         return true;
     }
-
-    // Fast case-insensitive match
+    
+    public boolean matches(char c) {
+        return length == 1 && source[start] == c;
+    }
+    
     public boolean matchesIgnoreCase(String s) {
         if (s == null) return false;
         if (s.length() != length) return false;
@@ -116,16 +289,17 @@ public class Token {
         }
         return true;
     }
-
-    // Fast character access
+    
     public char charAt(int index) {
         if (index < 0 || index >= length) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Length: " + length);
         }
         return source[start + index];
     }
-
-    // Check if token starts with prefix (no string creation)
+    
+    public char firstChar() { return length > 0 ? source[start] : '\0'; }
+    public char lastChar() { return length > 0 ? source[start + length - 1] : '\0'; }
+    
     public boolean startsWith(String prefix) {
         if (prefix == null) return false;
         if (prefix.length() > length) return false;
@@ -134,8 +308,9 @@ public class Token {
         }
         return true;
     }
-
-    // Check if token ends with suffix
+    
+    public boolean startsWith(char c) { return length > 0 && source[start] == c; }
+    
     public boolean endsWith(String suffix) {
         if (suffix == null) return false;
         if (suffix.length() > length) return false;
@@ -145,124 +320,93 @@ public class Token {
         }
         return true;
     }
-
-    // Extract substring without creating intermediate string
+    
+    public boolean endsWith(char c) { return length > 0 && source[start + length - 1] == c; }
+    
     public String substring(int startOffset, int endOffset) {
         if (startOffset < 0 || endOffset > length || startOffset >= endOffset) {
             throw new IndexOutOfBoundsException();
         }
         return new String(source, this.start + startOffset, endOffset - startOffset);
     }
-
-    // === TYPE CHECKING METHODS ===
-
-    public boolean isKeyword() {
-        return type == TokenType.KEYWORD && keyword != null;
+    
+    public void substringInto(int startOffset, int endOffset, StringBuilder out) {
+        if (startOffset < 0 || endOffset > length || startOffset >= endOffset) {
+            throw new IndexOutOfBoundsException();
+        }
+        out.append(source, this.start + startOffset, endOffset - startOffset);
     }
-
-    public boolean isKeyword(Keyword expected) {
-        return type == TokenType.KEYWORD && keyword == expected;
+    
+    public boolean isKeyword() { return type == TokenType.KEYWORD && keyword != null; }
+    public boolean isKeyword(Keyword expected) { return type == TokenType.KEYWORD && keyword == expected; }
+    public boolean isSymbol() { return type == TokenType.SYMBOL && symbol != null; }
+    public boolean isSymbol(Symbol expected) { return type == TokenType.SYMBOL && symbol == expected; }
+    
+    public boolean isSignificant() {
+        return type != TokenType.WS && 
+               type != TokenType.LINE_COMMENT && 
+               type != TokenType.BLOCK_COMMENT;
     }
-
-    public boolean isSymbol() {
-        return type == TokenType.SYMBOL && symbol != null;
+    
+    public boolean isLiteral() {
+        return type == TokenType.INT_LIT || type == TokenType.FLOAT_LIT ||
+               type == TokenType.TEXT_LIT || type == TokenType.BOOL_LIT;
     }
-
-    public boolean isSymbol(Symbol expected) {
-        return type == TokenType.SYMBOL && symbol == expected;
+    
+    public boolean hasChildTokens() { return childTokens != null && !childTokens.isEmpty(); }
+    public int getChildCount() { return childTokens == null ? 0 : childTokens.size(); }
+    public Token getChild(int index) {
+        return (childTokens != null && index >= 0 && index < childTokens.size()) 
+            ? childTokens.get(index) : null;
     }
-
-    // === CHILD TOKEN METHODS ===
-
-    public boolean hasChildTokens() {
-        return childTokens != null && !childTokens.isEmpty();
+    
+    public String getTextLegacy() { return getText(); }
+    
+    public void releaseSource() {
+        if (cachedText == null && length > 0) {
+            cachedText = getText();
+        }
     }
-
-    public List<Token> getChildTokens() {
-        return childTokens;
+    
+    public int compareTo(Token other) {
+        if (other == null) return 1;
+        int minLen = Math.min(length, other.length);
+        for (int i = 0; i < minLen; i++) {
+            char c1 = source[start + i];
+            char c2 = other.source[other.start + i];
+            if (c1 != c2) return c1 - c2;
+        }
+        return length - other.length;
     }
-
-    // === FACTORY METHODS (Zero-Copy Versions) ===
-
-    public static Token createKeyword(
-        char[] source, int start, int length, int line, int column, Keyword keyword) {
-        return new Token(
-            TokenType.KEYWORD, source, start, length, line, column, null, keyword, null, null);
+    
+    @Override
+    public int hashCode() {
+        if (cachedHash != 0) return cachedHash;
+        int result = type.hashCode();
+        for (int i = 0; i < length && i < 32; i++) {
+            result = 31 * result + source[start + i];
+        }
+        cachedHash = result;
+        return result;
     }
-
-    public static Token createSymbol(
-        char[] source, int start, int length, int line, int column, Symbol symbol) {
-        return new Token(
-            TokenType.SYMBOL, source, start, length, line, column, symbol, null, null, null);
+    
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (!(obj instanceof Token)) return false;
+        Token other = (Token) obj;
+        if (type != other.type) return false;
+        if (length != other.length) return false;
+        for (int i = 0; i < length; i++) {
+            if (source[start + i] != other.source[other.start + i]) return false;
+        }
+        return true;
     }
-
-    public static Token createIdentifier(char[] source, int start, int length, int line, int column) {
-        return new Token(TokenType.ID, source, start, length, line, column, null, null, null, null);
-    }
-
-    public static Token createNumber(
-        char[] source, int start, int length, boolean isFloat, int line, int column) {
-        return new Token(
-            isFloat ? TokenType.FLOAT_LIT : TokenType.INT_LIT,
-            source,
-            start,
-            length,
-            line,
-            column,
-            null,
-            null,
-            null,
-            null);
-    }
-
-    public static Token createTextLiteral(
-        char[] source, int start, int length, int line, int column) {
-        return new Token(
-            TokenType.TEXT_LIT, source, start, length, line, column, null, null, null, null);
-    }
-
-    public static Token createInterpolation(int line, int column, List<Token> childTokens) {
-        return new Token(
-            TokenType.INTERPOL, new char[0], 0, 0, line, column, null, null, childTokens, null);
-    }
-
-    // Legacy factory methods (for compatibility)
-    public static Token createKeyword(String text, int line, int column, Keyword keyword) {
-        char[] chars = text.toCharArray();
-        return createKeyword(chars, 0, chars.length, line, column, keyword);
-    }
-
-    public static Token createSymbol(String text, int line, int column, Symbol symbol) {
-        char[] chars = text.toCharArray();
-        return createSymbol(chars, 0, chars.length, line, column, symbol);
-    }
-
-    public static Token createIdentifier(String text, int line, int column) {
-        char[] chars = text.toCharArray();
-        return createIdentifier(chars, 0, chars.length, line, column);
-    }
-
-    public static Token createNumber(String text, boolean isFloat, int line, int column) {
-        char[] chars = text.toCharArray();
-        return createNumber(chars, 0, chars.length, isFloat, line, column);
-    }
-
-    public static Token createTextLiteral(String text, int line, int column) {
-        char[] chars = text.toCharArray();
-        return createTextLiteral(chars, 0, chars.length, line, column);
-    }
-
-    // === LEGACY GETTER (for backward compatibility) ===
-
-    public String getTextLegacy() {
-        return getText();
-    }
-
-    // Override toString to be zero-copy friendly
+    
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("Token{");
-        sb.append("type=").append(type.name());
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("Token{type=").append(type.name());
         sb.append(", text='").append(getText()).append('\'');
         if (symbol != null) sb.append(", symbol=").append(symbol.name());
         if (keyword != null) sb.append(", keyword=").append(keyword.name());
@@ -274,20 +418,29 @@ public class Token {
         sb.append('}');
         return sb.toString();
     }
+}
 
-    // Reset for token pooling (optional)
-    public void reset() {
-        cachedText = null;
+// TokenPool class
+class TokenPool {
+    private final Token[] pool;
+    private int index = 0;
+    
+    public TokenPool(int maxSize) {
+        this.pool = new Token[maxSize];
     }
-
-    /**
-     * Eagerly materializes and caches token text so callers can release external source buffers.
-     * Calling this multiple times is safe and idempotent.
-     * This does not mutate token position metadata or token type semantics.
-     */
-    public void releaseSource() {
-        if (cachedText == null && length > 0) {
-            cachedText = getText();
+    
+    public synchronized Token acquire() {
+        if (index > 0) {
+            Token token = pool[--index];
+            pool[index] = null;
+            return token;
+        }
+        return null;
+    }
+    
+    public synchronized void release(Token token) {
+        if (index < pool.length && token != null && token != Token.EMPTY_WHITESPACE) {
+            pool[index++] = token;
         }
     }
 }

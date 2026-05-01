@@ -196,7 +196,7 @@ public final class Lowerer {
             return;
         }
 
-        if (stmt instanceof VoidReturn) {
+        if (stmt instanceof Exit) {
             fn.instructions.add(new Instruction(
                 Opcode.RETURN,
                 null,

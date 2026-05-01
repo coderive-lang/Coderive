@@ -9,7 +9,6 @@ import cod.ptac.Artifact;
 import cod.semantic.ImportResolver;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Map;
 
 public class IRValidationRunner extends BaseRunner {

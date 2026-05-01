@@ -591,12 +591,12 @@ public class ASTFactory {
     return var;
   }
 
-  public static VoidReturn createVoidReturn(Token finToken) {
-    VoidReturn voidReturn = new VoidReturn();
-    if (finToken != null) {
-      voidReturn.setSourceSpan(span(finToken));
+  public static Exit createExit(Token exitToken) {
+    Exit exit = new Exit();
+    if (exitToken != null) {
+      exit.setSourceSpan(span(exitToken));
     }
-    return voidReturn;
+    return exit;
   }
 
   public static ArgumentList createArgumentList(List<Expr> arguments, Token lparenToken) {

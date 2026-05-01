@@ -8,45 +8,48 @@ import cod.error.ProgramError;
 import cod.interpreter.InterpreterVisitor;
 import cod.interpreter.TailCallSignal;
 import cod.interpreter.context.ExecutionContext;
-import cod.interpreter.exception.EarlyExitException;
 import cod.math.AutoStackingNumber;
 import cod.range.ArrayTracker;
 import cod.range.NaturalArray;
 import cod.range.pattern.ConditionalPattern;
 import cod.range.pattern.OutputAwarePattern;
 import cod.range.pattern.SequencePattern;
+import cod.range.pattern.AccumulationPattern;
+import cod.range.formula.AccumulationFormula;
 import cod.range.formula.ConditionalFormula;
 import cod.range.formula.SequenceFormula;
 
 import java.util.*;
 
-public class LoopOptimizationHandler {
+public class LoopHandler {
     private static final int LAZY_THRESHOLD = 10;
     private static final int MAX_SUPPORTED_LAG = 64;
     private static final int MIN_VECTOR_SEQUENCES = 2;
     private static final int MAX_VECTOR_SEQUENCES = 64;
-
+    private static final AutoStackingNumber ZERO = AutoStackingNumber.fromLong(0);
+    private static final AutoStackingNumber ONE = AutoStackingNumber.fromLong(1);
+    
     private final InterpreterVisitor dispatcher;
     private final TypeHandler typeSystem;
-    private final ExpressionHandler expressionHandler;
-    private final ArrayOperationHandler arrayOperationHandler;
+    private final ExpressionHandler exprHandler;
+    private final ArrayHandler arrHandler;
     private final PatternHandler patternHandler;
 
-    public LoopOptimizationHandler(
+    public LoopHandler(
         InterpreterVisitor dispatcher,
         TypeHandler typeSystem,
-        ExpressionHandler expressionHandler,
-        ArrayOperationHandler arrayOperationHandler,
+        ExpressionHandler exprHandler,
+        ArrayHandler arrHandler,
         PatternHandler patternHandler) {
-        if (dispatcher == null) throw new InternalError("LoopOptimizationHandler dispatcher is null");
-        if (typeSystem == null) throw new InternalError("LoopOptimizationHandler typeSystem is null");
-        if (expressionHandler == null) throw new InternalError("LoopOptimizationHandler expressionHandler is null");
-        if (arrayOperationHandler == null) throw new InternalError("LoopOptimizationHandler arrayOperationHandler is null");
-        if (patternHandler == null) throw new InternalError("LoopOptimizationHandler patternHandler is null");
+        if (dispatcher == null) throw new InternalError("LoopHandler dispatcher is null");
+        if (typeSystem == null) throw new InternalError("LoopHandler typeSystem is null");
+        if (exprHandler == null) throw new InternalError("LoopHandler exprHandler is null");
+        if (arrHandler == null) throw new InternalError("LoopHandler arrHandler is null");
+        if (patternHandler == null) throw new InternalError("LoopHandler patternHandler is null");
         this.dispatcher = dispatcher;
         this.typeSystem = typeSystem;
-        this.expressionHandler = expressionHandler;
-        this.arrayOperationHandler = arrayOperationHandler;
+        this.exprHandler = exprHandler;
+        this.arrHandler = arrHandler;
         this.patternHandler = patternHandler;
     }
 
@@ -85,19 +88,17 @@ public class LoopOptimizationHandler {
             ArrayTracker.incrementIteration();
 
             if (node.range != null) {
-                return arrayOperationHandler.executeRangeLoop(ctx, node, node.iterator);
+                return arrHandler.executeRangeLoop(ctx, node, node.iterator);
             } else if (node.arraySource != null) {
                 Object arrayObj = dispatcher.dispatch(node.arraySource);
                 arrayObj = typeSystem.unwrap(arrayObj);
-                return arrayOperationHandler.executeArrayLoop(ctx, node, node.iterator, arrayObj);
+                return arrHandler.executeArrayLoop(ctx, node, node.iterator, arrayObj);
             }
             throw new ProgramError("Invalid for loop: neither range nor array source specified");
 
         } catch (ProgramError e) {
             throw e;
         } catch (TailCallSignal e) {
-            throw e;
-        } catch (EarlyExitException e) {
             throw e;
         } catch (Exception e) {
             throw new InternalError("For loop execution failed", e);
@@ -245,11 +246,16 @@ public class LoopOptimizationHandler {
             }
         }
 
-        PatternHandler.LinearRecurrencePattern recurrencePattern = extractLinearRecurrencePattern(node);
-        if (recurrencePattern != null) {
+        // Extract linear recurrence as AccumulationPattern (FREC type)
+        AccumulationPattern recurrencePattern = extractLinearRecurrencePattern(node);
+        if (recurrencePattern != null && recurrencePattern.isOptimizable) {
             try {
                 List<PatternHandler.PatternResult> patterns = new ArrayList<PatternHandler.PatternResult>();
-                patterns.add(new PatternHandler.PatternResult(PatternHandler.PatternType.LINEAR_RECURRENCE, recurrencePattern, recurrencePattern.targetArray));
+                patterns.add(new PatternHandler.PatternResult(
+                    PatternHandler.PatternType.ARRAY_RECURRENCE, 
+                    recurrencePattern, 
+                    recurrencePattern.stateVars.length > 0 ? null : null
+                ));
                 Object result = patternHandler.applyPatterns(node, patterns);
                 ArrayTracker.markLoopOptimized(loopId);
                 return result;
@@ -294,9 +300,208 @@ public class LoopOptimizationHandler {
                 DebugSystem.debug("OPTIMIZER", "Conditional pattern failed: " + e.getMessage());
             }
         }
+        AccumulationPattern accPattern = AccumulationPattern.extract(node);
 
+        if (accPattern != null && accPattern.isOptimizable) {
+            try {
+                Object result = executeAccumulation(node, accPattern, dispatcher.getCurrentContext());
+                return result;
+            } catch (Exception e) {
+            }
+        }        
         return null;
     }
+
+    // ========== SCALAR ACCUMULATION METHODS ==========
+
+    private AutoStackingNumber evaluateBoundAsAutoStacking(Expr bound, ExecutionContext ctx) {
+        if (bound == null) {
+            return ZERO;
+        }
+        try {
+            Object val = dispatcher.dispatch(bound);
+            val = typeSystem.unwrap(val);
+            return typeSystem.toAutoStackingNumber(val);
+        } catch (Exception e) {
+            DebugSystem.debug("OPTIMIZER", "Failed to evaluate bound: " + e.getMessage());
+            return ZERO;
+        }
+    }
+
+    private AutoStackingNumber evaluateStepAsAutoStacking(Expr step, ExecutionContext ctx) {
+        if (step == null) {
+            return ONE;
+        }
+        try {
+            Object val = dispatcher.dispatch(step);
+            val = typeSystem.unwrap(val);
+            return typeSystem.toAutoStackingNumber(val);
+        } catch (Exception e) {
+            return ONE;
+        }
+    }
+
+    private AutoStackingNumber calculateStepFromNodeAsAutoStacking(For node, ExecutionContext ctx) {
+        if (node.range != null && node.range.step != null) {
+            return evaluateStepAsAutoStacking(node.range.step, ctx);
+        }
+        if (node.range != null) {
+            AutoStackingNumber start = evaluateBoundAsAutoStacking(node.range.start, ctx);
+            AutoStackingNumber end = evaluateBoundAsAutoStacking(node.range.end, ctx);
+            return start.compareTo(end) <= 0 ? ONE : AutoStackingNumber.minusOne(1);
+        }
+        return ONE;
+    }
+
+    private Object convertToOriginalType(AutoStackingNumber value, Object original) {
+        if (original instanceof Integer) {
+            return Integer.valueOf((int) value.longValue());
+        }
+        if (original instanceof Long) {
+            return Long.valueOf(value.longValue());
+        }
+        if (original instanceof Double) {
+            return Double.valueOf(value.doubleValue());
+        }
+        if (original instanceof Float) {
+            return Float.valueOf((float) value.doubleValue());
+        }
+        return value;
+    }
+
+    private Object executeAccumulation(For node, AccumulationPattern pattern, ExecutionContext ctx) {
+        // Evaluate bounds at runtime (works with method parameters!)
+        AutoStackingNumber start, end, step;
+        
+        if (node.range != null) {
+            start = evaluateBoundAsAutoStacking(node.range.start, ctx);
+            end = evaluateBoundAsAutoStacking(node.range.end, ctx);
+            step = calculateStepFromNodeAsAutoStacking(node, ctx);
+        } else if (node.arraySource != null) {
+            Object source = dispatcher.dispatch(node.arraySource);
+            source = typeSystem.unwrap(source);
+            if (source instanceof NaturalArray) {
+                start = ZERO;
+                end = AutoStackingNumber.fromLong(((NaturalArray) source).size() - 1);
+                step = ONE;
+            } else if (source instanceof List) {
+                start = ZERO;
+                end = AutoStackingNumber.fromLong(((List<?>) source).size() - 1);
+                step = ONE;
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+        
+        // Check step direction - we only support forward iteration for now
+        if (step.compareTo(ZERO) <= 0) {
+            return null;
+        }
+        
+        // Get initial values
+        AutoStackingNumber[] initialValues = new AutoStackingNumber[pattern.stateVars.length];
+        for (int i = 0; i < pattern.stateVars.length; i++) {
+            Object val = ctx.getVariable(pattern.stateVars[i]);
+            if (val == null) {
+                return null;
+            }
+            initialValues[i] = typeSystem.toAutoStackingNumber(val);
+        }
+        
+        AutoStackingNumber result;
+        
+        switch (pattern.type) {
+            case FSUM:
+                if (pattern.constantExpr != null) {
+                    // Loop-invariant expression - evaluate once, then multiply by iterations
+                    AutoStackingNumber constValue = typeSystem.toAutoStackingNumber(
+                        dispatcher.dispatch(pattern.constantExpr)
+                    );
+                    AutoStackingNumber iterations = end.subtract(start).divide(step).add(ONE);
+                    result = initialValues[0].add(constValue.multiply(iterations));
+                } else {
+                    AccumulationFormula sumFormula = new AccumulationFormula(
+                        pattern.polynomialCoeffs, initialValues[0], start, end, step
+                    );
+                    result = sumFormula.evaluate();
+                }
+                break;
+                
+            case FREC:
+                // Calculate iterations: ((end - start) / step)
+                AutoStackingNumber diff = end.subtract(start);
+                AutoStackingNumber steps = diff.divide(step);
+                AutoStackingNumber iterations = steps;
+                
+                AccumulationFormula recFormula = new AccumulationFormula(
+                    pattern.recurrenceCoeffs, initialValues
+                );
+                result = recFormula.evaluate(iterations);
+                break;
+                
+            case NSUM:
+                List<AutoStackingNumber> bounds = new ArrayList<AutoStackingNumber>();
+                for (Expr boundExpr : pattern.nestedBounds) {
+                    bounds.add(evaluateBoundAsAutoStacking(boundExpr, ctx));
+                }
+                
+                AccumulationFormula nestedFormula = new AccumulationFormula(
+                    bounds, pattern.nestedFactorCoeffs, pattern.isProductOfSums, initialValues[0]
+                );
+                result = nestedFormula.evaluate();
+                break;
+                
+            case NREC:
+                AutoStackingNumber[] dimBounds = new AutoStackingNumber[pattern.dimensions];
+                for (int i = 0; i < pattern.dimensions; i++) {
+                    dimBounds[i] = evaluateBoundAsAutoStacking(pattern.dimBounds.get(i), ctx);
+                }
+                
+                AutoStackingNumber[][][] ndCoeffs = pattern.ndCoeffs;
+                AutoStackingNumber[] ndInitialState = new AutoStackingNumber[pattern.ndInitialState.length];
+                for (int i = 0; i < ndInitialState.length; i++) {
+                    ndInitialState[i] = pattern.ndInitialState[i];
+                }
+                
+                AccumulationFormula ndFormula = new AccumulationFormula(
+                    pattern.dimensions, dimBounds, ndCoeffs, ndInitialState
+                );
+                result = ndFormula.evaluate();
+                break;
+                
+            case VEC:
+                AutoStackingNumber iterationsVec = end.subtract(start).divide(step).add(ONE);
+                
+                AutoStackingNumber[][][] vecCoeffs = pattern.vectorCoeffs;
+                AutoStackingNumber[] vecConstants = pattern.vectorConstants;
+                AutoStackingNumber[][] seedValues = pattern.vectorSeedValues;
+                
+                AccumulationFormula vecFormula = new AccumulationFormula(
+                    pattern.vectorDim, pattern.vectorOrder, vecCoeffs, vecConstants, seedValues
+                );
+                result = vecFormula.evaluate(iterationsVec);
+                break;
+                
+            default:
+                return null;
+        }
+        
+        // Update variable
+        Object finalResult = convertToOriginalType(result, ctx.getVariable(pattern.stateVars[0]));
+        ctx.setVariable(pattern.stateVars[0], finalResult);
+        
+        // Update slot if exists (for return contracts like :: value: int)
+        if (ctx.getSlotCount() > 0 && ctx.hasSlot(pattern.stateVars[0])) {
+            ctx.setSlotValue(pattern.stateVars[0], finalResult);
+            ctx.markSlotAssigned(pattern.stateVars[0]);
+        }
+        
+        return finalResult;
+    }
+
+    // ========== VECTOR RECURRENCE METHODS ==========
 
     public List<PatternHandler.PatternResult> extractVectorLinearRecurrencePatterns(For node) {
         List<PatternHandler.PatternResult> results = new ArrayList<PatternHandler.PatternResult>();
@@ -414,39 +619,39 @@ public class LoopOptimizationHandler {
             }
         }
 
-        AutoStackingNumber[][] flatCoefficients = new AutoStackingNumber[dimension][dimension * maxLag];
-        for (int row = 0; row < dimension; row++) {
-            for (int lag = 1; lag <= maxLag; lag++) {
-                for (int col = 0; col < dimension; col++) {
-                    int flatCol = ((lag - 1) * dimension) + col;
-                    flatCoefficients[row][flatCol] = coeffByLag[row][lag][col];
-                }
-            }
+AutoStackingNumber[][][] flatCoefficients = new AutoStackingNumber[dimension][dimension * maxLag][1];
+for (int row = 0; row < dimension; row++) {
+    for (int lag = 1; lag <= maxLag; lag++) {
+        for (int col = 0; col < dimension; col++) {
+            int flatCol = ((lag - 1) * dimension) + col;
+            flatCoefficients[row][flatCol][0] = coeffByLag[row][lag][col];
         }
+    }
+}
 
-        PatternHandler.VectorRecurrencePattern pattern = new PatternHandler.VectorRecurrencePattern(
-            targetExprs,
-            dimension,
-            maxLag,
-            flatCoefficients,
-            constants,
-            recurrenceStart,
-            seedStart,
-            seedValues,
-            targetIndexByName
-        );
+// Create AccumulationPattern for VEC type
+AccumulationPattern accPattern = new AccumulationPattern(
+    AccumulationPattern.AccumulationType.VEC,
+    orderedTargets.toArray(new String[dimension]),
+    dimension,
+    maxLag,
+    flatCoefficients,
+    constants,
+    seedValues,
+    orderedTargets
+);
 
         for (Expr targetExpr : targetExprs) {
             results.add(new PatternHandler.PatternResult(
-                PatternHandler.PatternType.VECTOR_LINEAR_RECURRENCE,
-                pattern,
+                PatternHandler.PatternType.VECTOR_RECURRENCE,
+                accPattern,
                 targetExpr
             ));
         }
         return results;
     }
 
-    public PatternHandler.LinearRecurrencePattern extractLinearRecurrencePattern(For node) {
+    public AccumulationPattern extractLinearRecurrencePattern(For node) {
         if (node == null || node.body == null || node.body.statements == null) {
             return null;
         }
@@ -540,14 +745,23 @@ public class LoopOptimizationHandler {
             seed[i] = v;
         }
 
-        return new PatternHandler.LinearRecurrencePattern(
-            leftAccess.array,
-            order,
-            coeffByLag,
-            constant[0],
-            recurrenceStart,
-            seedStart,
-            seed
+        // Convert to AccumulationPattern (FREC type)
+        AutoStackingNumber[] recurrenceCoeffs = new AutoStackingNumber[3];
+        if (order >= 1) recurrenceCoeffs[0] = coeffByLag[0];
+        if (order >= 2) recurrenceCoeffs[1] = coeffByLag[1];
+        recurrenceCoeffs[2] = constant[0];
+        
+        AutoStackingNumber[] initialValues = new AutoStackingNumber[2];
+        initialValues[0] = seed[0];
+        initialValues[1] = seed.length > 1 ? seed[1] : seed[0];
+        
+        return new AccumulationPattern(
+            AccumulationPattern.AccumulationType.FREC,
+            new String[]{targetName},
+            node.range != null ? node.range.start : null,
+            node.range != null ? node.range.end : null,
+            node.range != null ? node.range.step : null,
+            recurrenceCoeffs
         );
     }
 
@@ -782,8 +996,8 @@ public class LoopOptimizationHandler {
         if (node.range != null) {
             Object startObj = dispatcher.dispatch(node.range.start);
             Object endObj = dispatcher.dispatch(node.range.end);
-            long start = expressionHandler.toLong(startObj);
-            long end = expressionHandler.toLong(endObj);
+            long start = exprHandler.toLong(startObj);
+            long end = exprHandler.toLong(endObj);
             return new long[]{Math.min(start, end), Math.max(start, end)};
         }
         if (node.arraySource != null) {
@@ -1012,9 +1226,9 @@ public class LoopOptimizationHandler {
             startObj = typeSystem.unwrap(startObj);
             endObj = typeSystem.unwrap(endObj);
 
-            long start = expressionHandler.toLong(startObj);
-            long end = expressionHandler.toLong(endObj);
-            long step = arrayOperationHandler.calculateRangeStep(node.range);
+            long start = exprHandler.toLong(startObj);
+            long end = exprHandler.toLong(endObj);
+            long step = arrHandler.calculateRangeStep(node.range);
 
             for (long i = start; i <= end; i += step) {
                 Object value = arr.get(i);

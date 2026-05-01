@@ -2,7 +2,6 @@ package cod.ast.node;
 
 import java.util.List;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Map;
 
 import cod.ast.VisitorImpl;

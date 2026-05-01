@@ -572,9 +572,10 @@ public class ConstructorResolver {
             argValue = typeSystem.normalizeForDeclaredType(param.type, argValue);
             
             if (param.type.contains("|")) {
-                String activeType = typeSystem.getConcreteType(typeSystem.unwrap(argValue));
-                return new TypeHandler.Value(argValue, activeType, param.type);
-            }
+    int activeMask = typeSystem.getConcreteMask(typeSystem.unwrap(argValue));
+    int declaredMask = TypeHandler.parseTypeMask(param.type);
+    return new TypeHandler.Value(argValue, activeMask, declaredMask);
+}
             
             return argValue;
         } catch (ProgramError e) {
@@ -965,7 +966,6 @@ public class ConstructorResolver {
         }
         
         try {
-            buildFlattenedMethodTable(type, ctx);
             String actualFieldName = fieldName;
             if (fieldName != null && fieldName.startsWith("this.")) {
                 actualFieldName = fieldName.substring(5);
@@ -982,16 +982,6 @@ public class ConstructorResolver {
         } catch (Exception e) {
             throw new InternalError("Field lookup failed: " + fieldName, e);
         }
-    }
-
-    public boolean hasFieldInHierarchy(Type type, String fieldName, ExecutionContext ctx) {
-        if (type == null || fieldName == null) {
-            return false;
-        }
-        buildFlattenedMethodTable(type, ctx);
-        String actualFieldName = fieldName.startsWith("this.") ? fieldName.substring(5) : fieldName;
-        Map<String, Field> fieldTable = flattenedFieldTables.get(type.name);
-        return fieldTable != null && fieldTable.containsKey(actualFieldName);
     }
     
     public Method findMethodInHierarchy(Type type, String methodName, ExecutionContext ctx) {

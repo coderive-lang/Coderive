@@ -22,7 +22,6 @@ public class ExpressionParser extends BaseParser {
     private static final class UnicodeEscapeParseResult {
         private final String text;
         private final int nextPos;
-        
         private UnicodeEscapeParseResult(String text, int nextPos) {
             this.text = text;
             this.nextPos = nextPos;
@@ -38,7 +37,6 @@ public class ExpressionParser extends BaseParser {
     private static final int PREC_UNARY = 90;
     private static final int PREC_CALL = 100;
     private static final int PREC_IS = 40;
-    // Infix-only reduction tiers. Unary and call/member/indexing are parsed in prefix/primary phases.
     private static final int[] REDUCTION_PRECEDENCE_ORDER = {
         PREC_FACTOR, PREC_TERM, PREC_COMPARISON, PREC_EQUALITY, PREC_IS
     };
@@ -75,30 +73,27 @@ public class ExpressionParser extends BaseParser {
     }
 
     public Expr parseExpr() {
-        return attempt(new ParserAction<Expr>() {
-            @Override
-            public Expr parse() throws ParseError {
-                if (bareInferredLambdaDisabledDepth == 0) {
-                    Expr inferredLambdaExpr = tryParseBareInferredLambdaExpression();
-                    if (inferredLambdaExpr != null) {
-                        return inferredLambdaExpr;
-                    }
+        if (bareInferredLambdaDisabledDepth == 0) {
+            if (is(DOLLAR)) {
+                Expr inferredLambdaExpr = tryParseBareInferredLambdaExpression();
+                if (inferredLambdaExpr != null) {
+                    return inferredLambdaExpr;
                 }
-                if (is(ALL, ANY)) {
-                    Token nextToken = next();
-                    if (is(nextToken, LPAREN)) {
-                        return parseMethodCall();
-                    }
-                    return parseBooleanChain();
-                }
-                return parsePrecedence(PREC_ASSIGNMENT);
             }
-        });
+        }
+        if (is(ALL, ANY)) {
+            Token nextToken = next();
+            if (is(nextToken, LPAREN)) {
+                return parseMethodCall();
+            }
+            return parseBooleanChain();
+        }
+        return parsePrecedence(PREC_ASSIGNMENT);
     }
 
     private Expr parseConstructorCall() {
         Token classNameToken = now();
-        String className = expect(ID).getText();  // Lazy allocation
+        String className = expect(ID).getText();
         expect(LPAREN);
 
         List<Expr> args = new ArrayList<Expr>();
@@ -124,98 +119,41 @@ public class ExpressionParser extends BaseParser {
     }
 
     private boolean isNamedArgument() {
-        save();
-        try {
-            Token first = now();
-            if (!is(first, ID)) return false;
-            
-            Token second = next();
-            return is(second, COLON);
-        } finally {
-            restore();
-        }
+        Token first = now();
+        if (!is(first, ID)) return false;
+        return is(next(), COLON);
     }
 
     private void parseNamedArgumentList(List<Expr> args, List<String> argNames) {
         do {
-            String argName = expect(ID).getText();  // Lazy allocation
-            
+            String argName = expect(ID).getText();
             expect(COLON);
             Expr value = parseExpr();
             
             args.add(value);
             argNames.add(argName);
             
-            if (!is(COMMA)) {
-                break;
-            }
+            if (!is(COMMA)) break;
             expect(COMMA);
         } while (!is(RPAREN));
     }
 
     public MethodCall parseMethodCall() {
-    return attempt(new ParserAction<MethodCall>() {
-        @Override
-        public MethodCall parse() throws ParseError {
-            Token nameStartToken = now();
-            String qualifiedNameStr = parseQualifiedNameOrKeyword();
-            String methodName = qualifiedNameStr;
-            if (qualifiedNameStr.contains(".")) {
-                methodName = qualifiedNameStr.substring(qualifiedNameStr.lastIndexOf('.') + 1);
-            }
-            
-            MethodCall call = ASTFactory.createMethodCall(methodName, qualifiedNameStr, nameStartToken);
-            
-            if (!qualifiedNameStr.contains(".") && globalFunctionNames != null && 
-                globalFunctionNames.contains(methodName)) {
-                call.isGlobal = true;
-            }
-            
-            expect(LPAREN);
-            
-            if (!is(RPAREN)) {
-                if (isNamedArgument()) {
-                    parseNamedArgumentList(call.arguments, call.argNames);
-                } else {
-                    call.arguments.add(parseExpr());
-                    call.argNames.add(null);
-                    
-                    while (consume(COMMA)) {
-                        call.arguments.add(parseExpr());
-                        call.argNames.add(null);
-                    }
-                }
-            }
-            expect(RPAREN);
-            
-            return call;
-        }
-    });
-}
-
-    private MethodCall parseSuperMethodCall() {
-        Token superToken = now();
-        expect(SUPER);
-        
-        expect(DOT);
-        
-        Token methodToken = now();
-        String methodName;
-        
-        if (is(methodToken, ID)) {
-            methodName = expect(ID).getText();  // Lazy allocation
-        } else if (canBeMethod(methodToken)) {
-            methodName = expect(KEYWORD).getText();  // Lazy allocation
-        } else {
-            throw error("Expected method name after 'super.'", methodToken);
+        Token nameStartToken = now();
+        String qualifiedNameStr = parseQualifiedNameOrKeyword();
+        String methodName = qualifiedNameStr;
+        if (qualifiedNameStr.contains(".")) {
+            methodName = qualifiedNameStr.substring(qualifiedNameStr.lastIndexOf('.') + 1);
         }
         
-        MethodCall call = ASTFactory.createMethodCall(methodName, "super." + methodName, superToken);
-        call.isSuperCall = true;
-        call.isGlobal = false;
+        MethodCall call = ASTFactory.createMethodCall(methodName, qualifiedNameStr, nameStartToken);
+        
+        if (!qualifiedNameStr.contains(".") && globalFunctionNames != null && 
+            globalFunctionNames.contains(methodName)) {
+            call.isGlobal = true;
+        }
         
         expect(LPAREN);
-        
         if (!is(RPAREN)) {
             if (isNamedArgument()) {
                 parseNamedArgumentList(call.arguments, call.argNames);
@@ -229,83 +167,105 @@ public class ExpressionParser extends BaseParser {
             }
         }
         expect(RPAREN);
+        return call;
+    }
+
+    private MethodCall parseSuperMethodCall() {
+        Token superToken = now();
+        expect(SUPER);
+        expect(DOT);
         
+        Token methodToken = now();
+        String methodName;
+        
+        if (is(methodToken, ID)) {
+            methodName = expect(ID).getText();
+        } else if (canBeMethod(methodToken)) {
+            methodName = expect(KEYWORD).getText();
+        } else {
+            throw error("Expected method name after 'super.'", methodToken);
+        }
+        
+        MethodCall call = ASTFactory.createMethodCall(methodName, "super." + methodName, superToken);
+        call.isSuperCall = true;
+        call.isGlobal = false;
+        
+        expect(LPAREN);
+        if (!is(RPAREN)) {
+            if (isNamedArgument()) {
+                parseNamedArgumentList(call.arguments, call.argNames);
+            } else {
+                call.arguments.add(parseExpr());
+                call.argNames.add(null);
+                while (consume(COMMA)) {
+                    call.arguments.add(parseExpr());
+                    call.argNames.add(null);
+                }
+            }
+        }
+        expect(RPAREN);
         return call;
     }
 
     private boolean isSuperMethodCall() {
-        return attempt(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                if (!is(SUPER)) return false;
-                expect(SUPER);
-                
-                if (!is(DOT)) return false;
-                expect(DOT);
-                
-                Token nameToken = now();
-                boolean isValidName = (is(nameToken, ID) || canBeMethod(nameToken));
-                if (!isValidName) return false;
-                
-                consume();
-                
-                return is(LPAREN);
-            }
-        });
+        if (!is(now(), SUPER)) return false;
+        if (!is(next(1), DOT)) return false;
+        Token nameToken = next(2);
+        if (!(is(nameToken, ID) || canBeMethod(nameToken))) return false;
+        return is(next(3), LPAREN);
     }
 
     private String parseQualifiedNameOrKeyword() {
         Token token = now();
-        
         if (canBeMethod(token)) {
-            String name = expect(KEYWORD).getText();  // Lazy allocation
-            
+            String name = expect(KEYWORD).getText();
             if (consume(DOT)) {
                 StringBuilder fullName = new StringBuilder(name);
                 fullName.append(".");
-                fullName.append(expect(ID).getText());  // Lazy allocation
-                
+                fullName.append(expect(ID).getText());
                 while (consume(DOT)) {
                     fullName.append(".");
-                    fullName.append(expect(ID).getText());  // Lazy allocation
+                    fullName.append(expect(ID).getText());
                 }
                 return fullName.toString();
             }
-            
             return name;
         }
-        
         return parseQualifiedName();
-    }
-
-    public boolean isRangeIndex() {
-        save();
-        try {
-            if (!isExprStart(now())) return false;
-            parseExpr();
-            
-            if (!is(RANGE_DOTDOT) && !is(TO)) return false;
-            
-            return true;
-        } catch (ParseError e) {
-            return false;
-        } finally {
-            restore();
-        }
     }
 
     public IndexAccess parseIndexAccessContinuation(Expr arrayExpr) {
         Token lbracketToken = expect(LBRACKET);
-        
+        Expr firstExpr = parseExpr();
         Expr indexExpr;
         
-        if (isRangeIndex()) {
-            indexExpr = parseRangeIndex();
+        if (is(RANGE_DOTDOT) || is(TO)) {
+            Token rangeToken = consume();
+            Expr end = parseExpr();
+            Expr step = null;
+            Token stepToken = null;
+            if (is(RANGE_HASH) || is(BY)) {
+                stepToken = consume();
+                step = parseExpr();
+            }
+            RangeIndex ri = ASTFactory.createRangeIndex(step, firstExpr, end, stepToken, rangeToken);
+            
+            if (is(COMMA)) {
+                List<RangeIndex> ranges = new ArrayList<RangeIndex>();
+                ranges.add(ri);
+                while (consume(COMMA)) {
+                    ranges.add(parseSingleRangeIndex());
+                }
+                expect(RBRACKET);
+                indexExpr = ASTFactory.createMultiRangeIndex(ranges, null);
+            } else {
+                expect(RBRACKET);
+                indexExpr = ri;
+            }
         } else {
-            indexExpr = parseExpr();
             if (consume(COMMA)) {
                 List<Expr> indices = new ArrayList<Expr>();
-                indices.add(indexExpr);
+                indices.add(firstExpr);
                 indices.add(parseExpr());
                 while (consume(COMMA)) {
                     indices.add(parseExpr());
@@ -314,40 +274,15 @@ public class ExpressionParser extends BaseParser {
                 indexExpr = ASTFactory.createTuple(indices, lbracketToken);
             } else {
                 expect(RBRACKET);
+                indexExpr = firstExpr;
             }
-            return ASTFactory.createIndexAccess(arrayExpr, indexExpr, lbracketToken);
         }
-        
         return ASTFactory.createIndexAccess(arrayExpr, indexExpr, lbracketToken);
     }
 
-    public Expr parseRangeIndex() {
-        List<RangeIndex> ranges = new ArrayList<RangeIndex>();
-        
-        ranges.add(parseSingleRangeIndex());
-        
-        while (is(COMMA)) {
-            expect(COMMA);
-            ranges.add(parseSingleRangeIndex());
-        }
-        
-        expect(RBRACKET);
-        
-        if (ranges.size() == 1) {
-            return ranges.get(0);
-        }
-        return ASTFactory.createMultiRangeIndex(ranges, null);
-    }
-
     private RangeIndex parseSingleRangeIndex() {
-        Expr step = null;
-        Expr start;
-        Expr end;
-        Token stepToken = null;
+        Expr start = parseExpr();
         Token rangeToken = null;
-        
-        start = parseExpr();
-        
         if (is(RANGE_DOTDOT)) {
             rangeToken = expect(RANGE_DOTDOT);
         } else if (is(TO)) {
@@ -356,8 +291,9 @@ public class ExpressionParser extends BaseParser {
             throw error("Expected range operator '..' or 'to'");
         }
         
-        end = parseExpr();
-        
+        Expr end = parseExpr();
+        Expr step = null;
+        Token stepToken = null;
         if (is(RANGE_HASH)) {
             stepToken = expect(RANGE_HASH);
             step = parseExpr();
@@ -365,7 +301,6 @@ public class ExpressionParser extends BaseParser {
             stepToken = expect(BY);
             step = parseExpr();
         }
-        
         return ASTFactory.createRangeIndex(step, start, end, stepToken, rangeToken);
     }
 
@@ -374,9 +309,9 @@ public class ExpressionParser extends BaseParser {
         List<String> slots = new ArrayList<String>();
         do {
             if (is(ID)) {
-                slots.add(expect(ID).getText());  // Lazy allocation
+                slots.add(expect(ID).getText());
             } else if (is(INT_LIT)) {
-                slots.add(expect(INT_LIT).getText());  // Lazy allocation
+                slots.add(expect(INT_LIT).getText());
             } else {
                 throw error("Expected slot name or index", now());
             }
@@ -399,7 +334,6 @@ public class ExpressionParser extends BaseParser {
         }
         
         Token elseToken = expect(ELSE);
-        
         Expr elseExpr;
         if (is(LBRACE)) {
             expect(LBRACE);
@@ -408,31 +342,22 @@ public class ExpressionParser extends BaseParser {
         } else {
             elseExpr = parseExpr();
         }
-        
         return ASTFactory.createIfExpr(condition, thenExpr, elseExpr, ifToken, elseToken);
     }
 
     public boolean isLambdaExpression() {
-        return attempt(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                return is(LAMBDA);
-            }
-        });
+        return is(LAMBDA);
     }
 
     public Lambda parseLambdaSignature() {
         Token lambdaToken = expect(LAMBDA);
-        
         SlotParser slotParser = new SlotParser(this);
-        
         expect(LPAREN);
+        
         LambdaParamsParseResult lambdaParams = parseLambdaParameters();
         List<Param> parameters = lambdaParams.parameters;
-        
         expect(RPAREN);
         
-        // Expression-body lambda, e.g. \() $left + $right
         if (!is(DOUBLE_COLON) && !is(TILDE_ARROW) && !is(LBRACE)) {
             Lambda lambda = ASTFactory.createLambda(parameters, null, null, lambdaToken);
             lambda.inferParameters = lambdaParams.inferParameters;
@@ -440,25 +365,20 @@ public class ExpressionParser extends BaseParser {
             return lambda;
         }
         
-        // Parse optional return contract (::)
         List<Slot> returnSlots = null;
         if (is(DOUBLE_COLON)) {
             returnSlots = slotParser.parseSlotContract();
         }
         
-        // Parse lambda body
         Stmt body;
         Token tildeArrowToken = null;
         
         if (is(LBRACE)) {
-            // Block body - requires statementParser
             if (statementParser == null) {
                 throw error("Internal error: statementParser not available for lambda block");
             }
-            
             expect(LBRACE);
             Block block = new Block();
-            
             while (!is(RBRACE) && !is(EOF)) {
                 block.statements.add(statementParser.parseStmt());
             }
@@ -466,16 +386,12 @@ public class ExpressionParser extends BaseParser {
             body = block;
         } else if (is(TILDE_ARROW)) {
             tildeArrowToken = expect(TILDE_ARROW);
+            List<SlotAssignment> assignments = slotParser.parseParenthesizedSlotAssignments(tildeArrowToken);
 
-            List<SlotAssignment> assignments =
-                slotParser.parseParenthesizedSlotAssignments(tildeArrowToken);
-
-            // Validate against contract if present
             if (returnSlots != null) {
                 slotParser.validateSlotCount(returnSlots, assignments, tildeArrowToken);
             }
 
-            // Wrap in Block
             Block block = new Block();
             if (assignments.size() == 1) {
                 block.statements.add(assignments.get(0));
@@ -484,12 +400,7 @@ public class ExpressionParser extends BaseParser {
             }
             body = block;
         } else {
-            // Error: missing ~> or {
-            throw error(
-                "Expected '~>' or '{' after lambda parameters" +
-                (returnSlots != null ? " (return contract requires ~> assignments)" : ""),
-                now()
-            );
+            throw error("Expected '~>' or '{' after lambda parameters", now());
         }
         
         Lambda lambda = ASTFactory.createLambda(parameters, returnSlots, body, lambdaToken);
@@ -503,9 +414,7 @@ public class ExpressionParser extends BaseParser {
 
         if (!is(RPAREN)) {
             Token current = now();
-            boolean underscoreInferMarker =
-                (is(UNDERSCORE) || (is(current, ID) && "_".equals(current.getText())))
-                    && is(next(), RPAREN);
+            boolean underscoreInferMarker = (is(UNDERSCORE) || (is(current, ID) && "_".equals(current.getText()))) && is(next(), RPAREN);
             if (underscoreInferMarker) {
                 consume();
                 inferParameters = true;
@@ -516,26 +425,17 @@ public class ExpressionParser extends BaseParser {
                 }
             }
         }
-
         return new LambdaParamsParseResult(parameters, inferParameters);
     }
 
     private Expr tryParseBareInferredLambdaExpression() {
-        return attempt(new ParserAction<Expr>() {
-            @Override
-            public Expr parse() throws ParseError {
-                if (!is(DOLLAR)) return null;
-                Token lambdaToken = now();
-                Expr expressionBody = parsePrecedence(PREC_ASSIGNMENT);
-                if (!containsPlaceholderIdentifier(expressionBody)) {
-                    return null;
-                }
-                Lambda lambda = ASTFactory.createLambda(new ArrayList<Param>(), null, null, lambdaToken);
-                lambda.inferParameters = true;
-                lambda.expressionBody = expressionBody;
-                return lambda;
-            }
-        });
+        if (!is(DOLLAR)) return null;
+        Token lambdaToken = now();
+        Expr expressionBody = parsePrecedence(PREC_ASSIGNMENT);
+        Lambda lambda = ASTFactory.createLambda(new ArrayList<Param>(), null, null, lambdaToken);
+        lambda.inferParameters = true;
+        lambda.expressionBody = expressionBody;
+        return lambda;
     }
 
     private Expr parseExprWithoutBareInferredLambda() {
@@ -547,107 +447,9 @@ public class ExpressionParser extends BaseParser {
         }
     }
 
-    private boolean containsPlaceholderIdentifier(Base node) {
-        if (node == null) return false;
-
-        if (node instanceof Identifier) {
-            String name = ((Identifier) node).name;
-            return name != null && name.startsWith("$") && name.length() > 1;
-        }
-        if (node instanceof Lambda) {
-            return false;
-        }
-        if (node instanceof BinaryOp) {
-            BinaryOp n = (BinaryOp) node;
-            return containsPlaceholderIdentifier(n.left) || containsPlaceholderIdentifier(n.right);
-        }
-        if (node instanceof Unary) {
-            return containsPlaceholderIdentifier(((Unary) node).operand);
-        }
-        if (node instanceof TypeCast) {
-            return containsPlaceholderIdentifier(((TypeCast) node).expression);
-        }
-        if (node instanceof MethodCall) {
-            MethodCall n = (MethodCall) node;
-            if (n.target != null && containsPlaceholderIdentifier(n.target)) return true;
-            if (n.arguments != null) {
-                for (Expr arg : n.arguments) {
-                    if (containsPlaceholderIdentifier(arg)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof PropertyAccess) {
-            PropertyAccess n = (PropertyAccess) node;
-            return containsPlaceholderIdentifier(n.left) || containsPlaceholderIdentifier(n.right);
-        }
-        if (node instanceof IndexAccess) {
-            IndexAccess n = (IndexAccess) node;
-            return containsPlaceholderIdentifier(n.array) || containsPlaceholderIdentifier(n.index);
-        }
-        if (node instanceof Array) {
-            Array n = (Array) node;
-            if (n.elements != null) {
-                for (Expr expr : n.elements) {
-                    if (containsPlaceholderIdentifier(expr)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof Tuple) {
-            Tuple n = (Tuple) node;
-            if (n.elements != null) {
-                for (Expr expr : n.elements) {
-                    if (containsPlaceholderIdentifier(expr)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof ExprIf) {
-            ExprIf n = (ExprIf) node;
-            return containsPlaceholderIdentifier(n.condition)
-                || containsPlaceholderIdentifier(n.thenExpr)
-                || containsPlaceholderIdentifier(n.elseExpr);
-        }
-        if (node instanceof BooleanChain) {
-            BooleanChain n = (BooleanChain) node;
-            if (n.expressions != null) {
-                for (Expr expr : n.expressions) {
-                    if (containsPlaceholderIdentifier(expr)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof EqualityChain) {
-            EqualityChain n = (EqualityChain) node;
-            if (containsPlaceholderIdentifier(n.left)) return true;
-            if (n.chainArguments != null) {
-                for (Expr expr : n.chainArguments) {
-                    if (containsPlaceholderIdentifier(expr)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof ChainedComparison) {
-            ChainedComparison n = (ChainedComparison) node;
-            if (n.expressions != null) {
-                for (Expr expr : n.expressions) {
-                    if (containsPlaceholderIdentifier(expr)) return true;
-                }
-            }
-            return false;
-        }
-        if (node instanceof ValueExpr) {
-            Object value = ((ValueExpr) node).getValue();
-            return value instanceof Base && containsPlaceholderIdentifier((Base) value);
-        }
-        return false;
-    }
-
     private static final class LambdaParamsParseResult {
         private final List<Param> parameters;
         private final boolean inferParameters;
-
         private LambdaParamsParseResult(List<Param> parameters, boolean inferParameters) {
             this.parameters = parameters;
             this.inferParameters = inferParameters;
@@ -656,21 +458,14 @@ public class ExpressionParser extends BaseParser {
 
     private Param parseLambdaParameter() {
         Token paramToken = now();
-        
-        // Handle tuple destructuring
         if (is(LPAREN)) {
             expect(LPAREN);
             List<String> tupleElements = new ArrayList<String>();
-            
             if (!is(RPAREN)) {
-                tupleElements.add(expect(ID).getText());  // Lazy allocation
-                while (consume(COMMA)) {
-                    tupleElements.add(expect(ID).getText());  // Lazy allocation
-                }
+                tupleElements.add(expect(ID).getText());
+                while (consume(COMMA)) tupleElements.add(expect(ID).getText());
             }
             expect(RPAREN);
-            
-            // Create parameter with tuple destructuring info
             Param param = ASTFactory.createParam("_tuple", null, null, true, paramToken);
             param.isTupleDestructuring = true;
             param.tupleElements = tupleElements;
@@ -678,273 +473,231 @@ public class ExpressionParser extends BaseParser {
             return param;
         }
         
-        // Regular parameter
-        String paramName = expect(ID).getText();  // Lazy allocation
-        
-        // Optional type annotation
+        String paramName = expect(ID).getText();
         String paramType = null;
         if (consume(COLON)) {
             paramType = parseTypeReference();
         }
         
-        // Optional default value
         Expr defaultValue = null;
         if (consume(ASSIGN)) {
             defaultValue = parseExpr();
         }
         
         boolean typeInferred = (paramType == null);
-        Param param = ASTFactory.createParam(
-            paramName, paramType, defaultValue, typeInferred, paramToken
-        );
+        Param param = ASTFactory.createParam(paramName, paramType, defaultValue, typeInferred, paramToken);
         param.isLambdaParameter = true;
         param.hasDefaultValue = (defaultValue != null);
-        
         return param;
     }
 
     public Expr parsePrimaryExpr() {
-    return attempt(new ParserAction<Expr>() {
-        @Override
-        public Expr parse() throws ParseError {
-            Expr baseExpr;
-            Token startToken = now();
-            
-            if (startToken == null) {
-                throw error("Unexpected end of input in primary expression");
-            }
-            
-            if (is(LAMBDA)) {
-                baseExpr = parseLambdaSignature();
-            }
-            else if (isSuperMethodCall()) {
-                baseExpr = parseSuperMethodCall();
-            }
-            else if (is(SUPER)) {
-                Token superToken = expect(SUPER);
-                baseExpr = ASTFactory.createSuperExpr(superToken);
-            }
-            else if (isThisKeyword()) {
-                baseExpr = parseThisExpr();
-            }
-            else if (isConstructorCall() && !isMethodCallFollows()) {
-                baseExpr = parseConstructorCall();
-            }
-            else if (is(LBRACKET)) {
-                if (isSlotAccessExpression()) {
-                    List<String> slotNames = parseReturnSlots();
-                    expect(COLON);
-                    MethodCall methodCall = parseMethodCall();
-                    methodCall.slotNames = slotNames;
-                    baseExpr = methodCall;
-                } else {
-                    baseExpr = parseArrayLiteral();
-                }
-            }
-            else if (isMethodCallFollows()) {
-                MethodCall methodCall = parseMethodCall();
-                baseExpr = methodCall;
-            }
-            else if (is(IF)) {
-                baseExpr = parseIfExpr();
-            }
-            else if (is(INT_LIT)) {
-                Token intToken = expect(INT_LIT);
-                String intText = intToken.getText();
-                try {
-                    int intValue = Integer.parseInt(intText);
-                    baseExpr = ASTFactory.createIntLiteral(intValue, intToken);
-                } catch (NumberFormatException e1) {
-                    try {
-                        long longValue = Long.parseLong(intText);
-                        baseExpr = ASTFactory.createLongLiteral(longValue, intToken);
-                    } catch (NumberFormatException e2) {
-                        AutoStackingNumber bigValue = AutoStackingNumber.valueOf(intText);
-                        baseExpr = ASTFactory.createFloatLiteral(bigValue, intToken);
-                    }
-                }
-            }
-            else if (is(FLOAT_LIT)) {
-                Token floatToken = expect(FLOAT_LIT);
-                String floatText = floatToken.getText();
-                
-                Object resolvedValue = resolveFloatLiteralValue(floatText);
-                
-                if (resolvedValue instanceof AutoStackingNumber) {
-                    baseExpr = ASTFactory.createFloatLiteral((AutoStackingNumber)resolvedValue, floatToken);
-                } else {
-                    try {
-                        AutoStackingNumber value = AutoStackingNumber.valueOf(floatText);
-                        baseExpr = ASTFactory.createFloatLiteral(value, floatToken);
-                    } catch (NumberFormatException e) {
-                        throw error("Invalid numeric literal: " + floatText, floatToken);
-                    }
-                }
-            }
-            else if (is(TEXT_LIT, INTERPOL)) {
-                Token textToken = now();
-                
-                if (textToken.type == INTERPOL && textToken.hasChildTokens()) {
-                    List<Expr> parts = new ArrayList<Expr>();
-                    
-                    for (Token part : textToken.childTokens) {
-                        if (part.type == TEXT_LIT) {
-                            // Text parts are already unquoted by lexer
-                            parts.add(ASTFactory.createTextLiteral(part.getText(), part));
-                        } else if (part.type == INTERPOL) {
-                            if (part.hasChildTokens()) {
-                                ParserContext subCtx = new ParserContext(part.childTokens);
-                                ExpressionParser subParser = new ExpressionParser(subCtx, globalRegistry, statementParser);
-                                Expr expr = subParser.parseExpr();
-                                parts.add(expr);
-                            }
-                        }
-                    }
-                    
-                    if (parts.isEmpty()) {
-                        baseExpr = ASTFactory.createTextLiteral("", textToken);
-                    } else if (parts.size() == 1) {
-                        baseExpr = parts.get(0);
-                    } else {
-                        baseExpr = parts.get(0);
-                        for (int i = 1; i < parts.size(); i++) {
-                            baseExpr = ASTFactory.createBinaryOp(baseExpr, "+", parts.get(i), textToken);
-                        }
-                    }
-                } else {
-                    // Simple text literal - lexer already stripped quotes
-                    String text = textToken.getText();
-                    
-                    if (text.startsWith("|\"") && text.endsWith("\"|")) {
-                        baseExpr = handleMultilineTextInterpolation(textToken);
-                    } else {
-                        baseExpr = ASTFactory.createTextLiteral(text, textToken);
-                    }
-                }
-                consume();
-            }
-            else if (is(TRUE)) {
-                Token trueToken = expect(TRUE);
-                baseExpr = ASTFactory.createBoolLiteral(true, trueToken);
-            }
-            else if (is(FALSE)) {
-                Token falseToken = expect(FALSE);
-                baseExpr = ASTFactory.createBoolLiteral(false, falseToken);
-            }
-            else if (is(NONE)) {
-                Token noneToken = expect(NONE);
-                baseExpr = ASTFactory.createNoneLiteral(noneToken);
-            }
-            else if (is(INT, TEXT, FLOAT, BOOL, TYPE, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64)) {
-                Token typeToken = now();
-                String typeName = expect(KEYWORD).getText();
-                baseExpr = ASTFactory.createTextLiteral(typeName, typeToken);
-            }
-            else if (is(ID) || canBeMethod(now())) {
-                if (isMethodCallFollows()) {
-                    baseExpr = parseMethodCall();
-                } else {
-                    Token idToken = now();
-                    String idName;
-                    if (is(idToken, KEYWORD)) {
-                        idName = expect(KEYWORD).getText();
-                    } else {
-                        idName = expect(ID).getText();
-                    }
-                    baseExpr = ASTFactory.createIdentifier(idName, idToken);
-                }
-            }
-            else if (is(DOLLAR)) {
-                Token dollarToken = expect(DOLLAR);
-                Token nameToken = expect(ID);
-                baseExpr = ASTFactory.createIdentifier("$" + nameToken.getText(), dollarToken);
-            }
-            else if (is(LPAREN)) {
-                if (isTypeCast()) {
-                    baseExpr = parseTypeCast();
-                } else {
-                    Token lparenToken = expect(LPAREN);
-                    Expr firstExpr = parseExpr();
-                    
-                    if (is(COMMA)) {
-                        List<Expr> elements = new ArrayList<Expr>();
-                        elements.add(firstExpr);
-                        
-                        while (consume(COMMA)) {
-                            elements.add(parseExpr());
-                        }
-                        
-                        if (elements.size() == 1 && !is(RPAREN)) {
-                            throw error("Expected expression after comma in tuple");
-                        }
-                        
-                        expect(RPAREN);
-                        baseExpr = ASTFactory.createTuple(elements, lparenToken);
-                    } else {
-                        expect(RPAREN);
-                        baseExpr = firstExpr;
-                    }
-                }
-            }
-            else {
-                throw error("Unexpected token in primary expression: " + startToken.getText() +
-                    " (" + getTypeName(startToken.type) + ")", startToken);
-            }
-
-            while (is(DOT)) {
-                Token dotToken = expect(DOT);
-                
-                Expr property = parsePrimaryExpr();
-                
-                baseExpr = ASTFactory.createPropertyAccess(baseExpr, property, dotToken);
-            }
-
-            while (is(LBRACKET)) {
-                baseExpr = parseIndexAccessContinuation(baseExpr);
-            }
-
-            return baseExpr;
+        Expr baseExpr;
+        Token startToken = now();
+        
+        if (startToken == null) throw error("Unexpected end of input in primary expression");
+        
+        if (is(LAMBDA)) {
+            baseExpr = parseLambdaSignature();
         }
-    });
-}
+        else if (isSuperMethodCall()) {
+            baseExpr = parseSuperMethodCall();
+        }
+        else if (is(SUPER)) {
+            Token superToken = expect(SUPER);
+            baseExpr = ASTFactory.createSuperExpr(superToken);
+        }
+        else if (isThisKeyword()) {
+            baseExpr = parseThisExpr();
+        }
+        else if (isConstructorCall() && !isMethodCallFollows()) {
+            baseExpr = parseConstructorCall();
+        }
+        else if (is(LBRACKET)) {
+            if (isSlotAccessExpression()) {
+                List<String> slotNames = parseReturnSlots();
+                expect(COLON);
+                MethodCall methodCall = parseMethodCall();
+                methodCall.slotNames = slotNames;
+                baseExpr = methodCall;
+            } else {
+                baseExpr = parseArrayLiteral();
+            }
+        }
+        else if (isMethodCallFollows()) {
+            MethodCall methodCall = parseMethodCall();
+            baseExpr = methodCall;
+        }
+        else if (is(IF)) {
+            baseExpr = parseIfExpr();
+        }
+        else if (is(INT_LIT)) {
+            Token intToken = expect(INT_LIT);
+            String intText = intToken.getText();
+            try {
+                int intValue = Integer.parseInt(intText);
+                baseExpr = ASTFactory.createIntLiteral(intValue, intToken);
+            } catch (NumberFormatException e1) {
+                try {
+                    long longValue = Long.parseLong(intText);
+                    baseExpr = ASTFactory.createLongLiteral(longValue, intToken);
+                } catch (NumberFormatException e2) {
+                    AutoStackingNumber bigValue = AutoStackingNumber.valueOf(intText);
+                    baseExpr = ASTFactory.createFloatLiteral(bigValue, intToken);
+                }
+            }
+        }
+        else if (is(FLOAT_LIT)) {
+            Token floatToken = expect(FLOAT_LIT);
+            String floatText = floatToken.getText();
+            Object resolvedValue = resolveFloatLiteralValue(floatText);
+            if (resolvedValue instanceof AutoStackingNumber) {
+                baseExpr = ASTFactory.createFloatLiteral((AutoStackingNumber)resolvedValue, floatToken);
+            } else {
+                try {
+                    AutoStackingNumber value = AutoStackingNumber.valueOf(floatText);
+                    baseExpr = ASTFactory.createFloatLiteral(value, floatToken);
+                } catch (NumberFormatException e) {
+                    throw error("Invalid numeric literal: " + floatText, floatToken);
+                }
+            }
+        }
+        else if (is(TEXT_LIT, INTERPOL)) {
+            Token textToken = now();
+            if (textToken.type == INTERPOL && textToken.hasChildTokens()) {
+                List<Expr> parts = new ArrayList<Expr>();
+                for (Token part : textToken.childTokens) {
+                    if (part.type == TEXT_LIT) {
+                        parts.add(ASTFactory.createTextLiteral(part.getText(), part));
+                    } else if (part.type == INTERPOL) {
+                        if (part.hasChildTokens()) {
+                            ParserContext subCtx = new ParserContext(part.childTokens);
+                            ExpressionParser subParser = new ExpressionParser(subCtx, globalRegistry, statementParser);
+                            Expr expr = subParser.parseExpr();
+                            parts.add(expr);
+                        }
+                    }
+                }
+                if (parts.isEmpty()) {
+                    baseExpr = ASTFactory.createTextLiteral("", textToken);
+                } else if (parts.size() == 1) {
+                    baseExpr = parts.get(0);
+                } else {
+                    baseExpr = parts.get(0);
+                    for (int i = 1; i < parts.size(); i++) {
+                        baseExpr = ASTFactory.createBinaryOp(baseExpr, "+", parts.get(i), textToken);
+                    }
+                }
+            } else {
+                String text = textToken.getText();
+                if (text.startsWith("|\"") && text.endsWith("\"|")) {
+                    baseExpr = handleMultilineTextInterpolation(textToken);
+                } else {
+                    baseExpr = ASTFactory.createTextLiteral(text, textToken);
+                }
+            }
+            consume();
+        }
+        else if (is(TRUE)) {
+            Token trueToken = expect(TRUE);
+            baseExpr = ASTFactory.createBoolLiteral(true, trueToken);
+        }
+        else if (is(FALSE)) {
+            Token falseToken = expect(FALSE);
+            baseExpr = ASTFactory.createBoolLiteral(false, falseToken);
+        }
+        else if (is(NONE)) {
+            Token noneToken = expect(NONE);
+            baseExpr = ASTFactory.createNoneLiteral(noneToken);
+        }
+        else if (is(INT, TEXT, FLOAT, BOOL, TYPE, I8, I16, I32, I64, U8, U16, U32, U64, F32, F64)) {
+            Token typeToken = now();
+            String typeName = expect(KEYWORD).getText();
+            baseExpr = ASTFactory.createTextLiteral(typeName, typeToken);
+        }
+        else if (is(ID) || canBeMethod(now())) {
+            if (isMethodCallFollows()) {
+                baseExpr = parseMethodCall();
+            } else {
+                Token idToken = now();
+                String idName = is(KEYWORD) ? expect(KEYWORD).getText() : expect(ID).getText();
+                baseExpr = ASTFactory.createIdentifier(idName, idToken);
+            }
+        }
+        else if (is(DOLLAR)) {
+            Token dollarToken = expect(DOLLAR);
+            Token nameToken = expect(ID);
+            baseExpr = ASTFactory.createIdentifier("$" + nameToken.getText(), dollarToken);
+        }
+        else if (is(LPAREN)) {
+            if (isTypeCast()) {
+                baseExpr = parseTypeCast();
+            } else {
+                Token lparenToken = expect(LPAREN);
+                Expr firstExpr = parseExpr();
+                if (is(COMMA)) {
+                    List<Expr> elements = new ArrayList<Expr>();
+                    elements.add(firstExpr);
+                    while (consume(COMMA)) {
+                        elements.add(parseExpr());
+                    }
+                    if (elements.size() == 1 && !is(RPAREN)) {
+                        throw error("Expected expression after comma in tuple");
+                    }
+                    expect(RPAREN);
+                    baseExpr = ASTFactory.createTuple(elements, lparenToken);
+                } else {
+                    expect(RPAREN);
+                    baseExpr = firstExpr;
+                }
+            }
+        }
+        else {
+            throw error("Unexpected token in primary expression: " + startToken.getText() + " (" + getTypeName(startToken.type) + ")", startToken);
+        }
+
+        while (is(DOT)) {
+            Token dotToken = expect(DOT);
+            Expr property = parsePrimaryExpr();
+            baseExpr = ASTFactory.createPropertyAccess(baseExpr, property, dotToken);
+        }
+
+        while (is(LBRACKET)) {
+            baseExpr = parseIndexAccessContinuation(baseExpr);
+        }
+
+        return baseExpr;
+    }
 
     private Expr handleMultilineTextInterpolation(Token token) {
-        String fullText = token.getText();  // Lazy allocation
-        
+        String fullText = token.getText();
         if (!fullText.startsWith("|\"") || !fullText.endsWith("\"|")) {
             return ASTFactory.createTextLiteral(fullText, token);
         }
-        
         if (token.hasChildTokens()) {
             return handleInterpolatedTextWithTokens(token);
         }
-        
         return parseInterpolatedText(token);
     }
 
     private Expr handleInterpolatedTextWithTokens(Token token) {
         List<Token> exprTokens = token.childTokens;
-        
         if (exprTokens == null || exprTokens.isEmpty()) {
             return ASTFactory.createTextLiteral(token.getText(), token);
         }
-        
         List<Expr> parts = new ArrayList<Expr>();
-        
         String fullText = token.getText();
         if (fullText.startsWith("\"") && fullText.endsWith("\"")) {
             fullText = fullText.substring(1, fullText.length() - 1);
         } else if (fullText.startsWith("|\"") && fullText.endsWith("\"|")) {
             fullText = fullText.substring(2, fullText.length() - 2);
         }
-        
         int braceCount = 0;
         StringBuilder currentText = new StringBuilder();
         boolean inEscape = false;
         
         for (int i = 0; i < fullText.length(); i++) {
             char c = fullText.charAt(i);
-            
             if (inEscape) {
                 currentText.append('\\').append(c);
                 inEscape = false;
@@ -981,47 +734,32 @@ public class ExpressionParser extends BaseParser {
                 currentText.append(c);
             }
         }
-        
         if (currentText.length() > 0) {
             parts.add(ASTFactory.createTextLiteral(currentText.toString(), token));
         }
-        
-        if (parts.isEmpty()) {
-            return ASTFactory.createTextLiteral("", token);
-        } else if (parts.size() == 1) {
-            return parts.get(0);
-        }
+        if (parts.isEmpty()) return ASTFactory.createTextLiteral("", token);
+        else if (parts.size() == 1) return parts.get(0);
         
         Expr result = parts.get(0);
         for (int i = 1; i < parts.size(); i++) {
             result = ASTFactory.createBinaryOp(result, "+", parts.get(i), token);
         }
-        
         return result;
     }
 
     private Expr parsePreTokenizedInterpolation(Token token) {
         List<Token> exprTokens = token.childTokens;
-        
-        if (exprTokens == null || exprTokens.isEmpty()) {
-            throw error("Interpolation token has no child tokens", token);
-        }
+        if (exprTokens == null || exprTokens.isEmpty()) throw error("Interpolation token has no child tokens", token);
         
         ParserContext subCtx = new ParserContext(exprTokens);
         ExpressionParser subParser = new ExpressionParser(subCtx, globalRegistry, statementParser);
-        
         Expr result = subParser.parseExpr();
-        
-        if (!subParser.ctx.atEOF()) {
-            throw error("Extra tokens in interpolation expression", token);
-        }
-        
+        if (!subParser.ctx.atEOF()) throw error("Extra tokens in interpolation expression", token);
         return result;
     }
 
     private Expr parseInterpolatedText(Token token) {
-        String text = token.getText();  // Lazy allocation
-        
+        String text = token.getText();
         if (text.startsWith("\"") && text.endsWith("\"")) {
             text = text.substring(1, text.length() - 1);
         } else if (text.startsWith("|\"") && text.endsWith("\"|")) {
@@ -1035,7 +773,6 @@ public class ExpressionParser extends BaseParser {
         
         while (pos < text.length()) {
             char c = text.charAt(pos);
-            
             if (inEscape) {
                 switch (c) {
                     case 'n': current.append('\n'); break;
@@ -1056,7 +793,6 @@ public class ExpressionParser extends BaseParser {
                 pos++;
                 continue;
             }
-            
             if (c == '\\') {
                 inEscape = true;
                 pos++;
@@ -1065,43 +801,26 @@ public class ExpressionParser extends BaseParser {
                     parts.add(ASTFactory.createTextLiteral(current.toString(), token));
                     current.setLength(0);
                 }
-                
                 int end = text.indexOf('}', pos + 1);
-                if (end == -1) {
-                    throw error("Unclosed interpolation in text", token);
-                }
-                
+                if (end == -1) throw error("Unclosed interpolation in text", token);
                 String exprText = text.substring(pos + 1, end);
-                
                 Expr expr = parseInterpolationExpressionDirectly(exprText, token);
                 parts.add(expr);
-                
                 pos = end + 1;
             } else {
                 current.append(c);
                 pos++;
             }
         }
-        
-        if (inEscape) {
-            current.append('\\');
-        }
-        
-        if (current.length() > 0) {
-            parts.add(ASTFactory.createTextLiteral(current.toString(), token));
-        }
-        
-        if (parts.isEmpty()) {
-            return ASTFactory.createTextLiteral("", token);
-        } else if (parts.size() == 1) {
-            return parts.get(0);
-        }
+        if (inEscape) current.append('\\');
+        if (current.length() > 0) parts.add(ASTFactory.createTextLiteral(current.toString(), token));
+        if (parts.isEmpty()) return ASTFactory.createTextLiteral("", token);
+        else if (parts.size() == 1) return parts.get(0);
         
         Expr result = parts.get(0);
         for (int i = 1; i < parts.size(); i++) {
             result = ASTFactory.createBinaryOp(result, "+", parts.get(i), null);
         }
-        
         return result;
     }
     
@@ -1113,16 +832,11 @@ public class ExpressionParser extends BaseParser {
     }
     
     private int parseUnicodeUnit(String text, int start, Token token) {
-        if (start + 4 > text.length()) {
-            throw error("Incomplete Unicode escape in text literal", token);
-        }
-        
+        if (start + 4 > text.length()) throw error("Incomplete Unicode escape in text literal", token);
         int value = 0;
         for (int i = 0; i < 4; i++) {
             int digit = hexValue(text.charAt(start + i));
-            if (digit < 0) {
-                throw error("Invalid Unicode escape in text literal", token);
-            }
+            if (digit < 0) throw error("Invalid Unicode escape in text literal", token);
             value = (value << 4) + digit;
         }
         return value;
@@ -1131,119 +845,73 @@ public class ExpressionParser extends BaseParser {
     private UnicodeEscapeParseResult decodeUnicodeEscape(String text, int escapePos, Token token) {
         int firstUnit = parseUnicodeUnit(text, escapePos + 1, token);
         int nextPos = escapePos + 5;
-        
-        if (Character.isLowSurrogate((char)firstUnit)) {
-            throw error("Unexpected low surrogate in text Unicode escape", token);
-        }
-        
+        if (Character.isLowSurrogate((char)firstUnit)) throw error("Unexpected low surrogate in text Unicode escape", token);
         if (Character.isHighSurrogate((char)firstUnit)) {
-            if (nextPos + 5 >= text.length()) {
-                throw error("Missing low surrogate in text Unicode escape", token);
-            }
-            if (text.charAt(nextPos) != '\\' || text.charAt(nextPos + 1) != 'u') {
-                throw error("Expected low surrogate Unicode escape", token);
-            }
-            
+            if (nextPos + 5 >= text.length()) throw error("Missing low surrogate in text Unicode escape", token);
+            if (text.charAt(nextPos) != '\\' || text.charAt(nextPos + 1) != 'u') throw error("Expected low surrogate Unicode escape", token);
             int secondUnit = parseUnicodeUnit(text, nextPos + 2, token);
-            if (!Character.isLowSurrogate((char)secondUnit)) {
-                throw error("Invalid low surrogate in text Unicode escape", token);
-            }
-            
-            return new UnicodeEscapeParseResult(
-                new String(new char[] {(char)firstUnit, (char)secondUnit}),
-                nextPos + 6);
+            if (!Character.isLowSurrogate((char)secondUnit)) throw error("Invalid low surrogate in text Unicode escape", token);
+            return new UnicodeEscapeParseResult(new String(new char[] {(char)firstUnit, (char)secondUnit}), nextPos + 6);
         }
-        
         return new UnicodeEscapeParseResult(String.valueOf((char)firstUnit), nextPos);
     }
 
     private Expr parseInterpolationExpressionDirectly(String exprText, Token textToken) {
-        ParserState savedState = getCurrentState();
-        
-        try {
-            cod.lexer.MainLexer tempLexer = new cod.lexer.MainLexer(exprText, true);
-            tempLexer.line = textToken.line;
-            tempLexer.column = textToken.column + 1;
-            
-            List<Token> tokens = tempLexer.tokenize();
-            
-            if (tokens.isEmpty()) {
-                return ASTFactory.createTextLiteral("", textToken);
-            }
-            
-            ParserContext subCtx = new ParserContext(tokens);
-            ExpressionParser subParser = new ExpressionParser(subCtx, globalRegistry, statementParser);
-            
-            return subParser.parseExpr();
-        } finally {
-            setState(savedState);
-        }
+        cod.lexer.MainLexer tempLexer = new cod.lexer.MainLexer(exprText, true);
+        tempLexer.setLine(textToken.line);
+        tempLexer.setColumn(textToken.column + 1);
+        List<Token> tokens = tempLexer.tokenize();
+        if (tokens.isEmpty()) return ASTFactory.createTextLiteral("", textToken);
+        ParserContext subCtx = new ParserContext(tokens);
+        ExpressionParser subParser = new ExpressionParser(subCtx, globalRegistry, statementParser);
+        return subParser.parseExpr();
     }
 
     private boolean isThisKeyword() {
         Token current = now();
-        if (is(current, THIS)) {
-            return true;
-        } else if (is(current, ID)) {
-            if (is(next(), DOT)) {
-                Token afterDot = next(2);
-                if (is(afterDot, THIS)) {
-                    return true;
-                }
-            }
-        }
+        if (is(current, THIS)) return true;
+        if (is(current, ID) && is(next(), DOT) && is(next(2), THIS)) return true;
         return false;
     }
 
     private Expr parseThisExpr() {
         Token first = now();
         String className = null;
-        
         if (is(first, ID) && is(next(), DOT) && is(next(2), THIS)) {
             Token classNameToken = expect(ID);
-            className = classNameToken.getText();  // Lazy allocation
+            className = classNameToken.getText();
             expect(DOT);
             Token thisToken = expect(THIS);
             return ASTFactory.createThisExpr(className, thisToken);
         }
-        
         Token thisToken = expect(THIS);
         return ASTFactory.createThisExpr(null, thisToken);
     }
 
     private Object resolveFloatLiteralValue(String literal) {
-        // If it contains a decimal point, let the main valueOf handle it
-        if (literal.contains(".")) {
-            return null; // Let the fallback to AutoStackingNumber.valueOf() handle it
-        }
-        
+        if (literal.contains(".")) return null;
         String baseValueStr;
         String suffix;
         int exponent = 0;
         
-        // Handle Qi suffix
         if (literal.endsWith("Qi")) {
             suffix = "Qi";
             baseValueStr = literal.substring(0, literal.length() - 2);
             exponent = 18;
         } else {
             char lastChar = literal.charAt(literal.length() - 1);
-            
             if (lastChar == 'K' || lastChar == 'M' || lastChar == 'B' || lastChar == 'T' || lastChar == 'Q') {
                 suffix = String.valueOf(lastChar);
                 baseValueStr = literal.substring(0, literal.length() - 1);
-                
                 if ("K".equals(suffix)) exponent = 3;
                 else if ("M".equals(suffix)) exponent = 6;
                 else if ("B".equals(suffix)) exponent = 9;
                 else if ("T".equals(suffix)) exponent = 12;
                 else if ("Q".equals(suffix)) exponent = 15;
             } else {
-                // No suffix - let the main valueOf handle it
                 return null;
             }
         }
-        
         try {
             AutoStackingNumber base = AutoStackingNumber.valueOf(baseValueStr);
             AutoStackingNumber multiplier = AutoStackingNumber.fromLong(10).pow(exponent);
@@ -1254,9 +922,8 @@ public class ExpressionParser extends BaseParser {
     }
 
     private Expr parsePrecedence(int precedence) {
-        List<Expr> operands = new ArrayList<>();
-        List<Token> operators = new ArrayList<>();
-
+        List<Expr> operands = new ArrayList<Expr>();
+        List<Token> operators = new ArrayList<Token>();
         operands.add(parsePrefix());
 
         while (true) {
@@ -1264,10 +931,7 @@ public class ExpressionParser extends BaseParser {
             if (op == null) break;
 
             int opPrecedence = getPrecedence(op);
-            // Only consume true infix operators here; postfix/member forms are handled in parsePrimaryExpr().
-            if (opPrecedence < precedence || !isReducibleInfixOperator(op)) {
-                break;
-            }
+            if (opPrecedence < precedence || !isReducibleInfixOperator(op)) break;
 
             if (isComparisonOp(op) && isChainComparison(1)) {
                 Expr chainLeft = reduceFlatExpression(operands, operators);
@@ -1282,7 +946,6 @@ public class ExpressionParser extends BaseParser {
             operators.add(consume());
             operands.add(parsePrefix());
         }
-
         return reduceFlatExpression(operands, operators);
     }
 
@@ -1290,61 +953,41 @@ public class ExpressionParser extends BaseParser {
         List<Expr> expressions = new ArrayList<Expr>();
         List<String> operators = new ArrayList<String>();
         Token firstToken = now();
-        
         expressions.add(first);
         
         while (true) {
             Token opToken = now();
-            if (opToken == null) break;
+            if (opToken == null || !isComparisonOp(opToken)) break;
             
-            // Check if it's a comparison operator
-            if (!isComparisonOp(opToken)) {
-                break;
-            }
-            
-            operators.add(opToken.getText());  // Lazy allocation
-            consume(); // consume operator
-            
-            // Parse only the comparison operand (exclude further comparison operators)
+            operators.add(opToken.getText());
+            consume();
             Expr nextExpr = parsePrecedence(PREC_COMPARISON + 1);
             expressions.add(nextExpr);
             
-            // Look ahead - if next token is another comparison, continue the chain
             Token nextToken = now();
-            if (!isComparisonOp(nextToken)) {
-                break;
-            }
+            if (!isComparisonOp(nextToken)) break;
         }
-        
         return ASTFactory.createChainedComparison(expressions, operators, firstToken);
     }
 
     private Expr reduceFlatExpression(List<Expr> operands, List<Token> operators) {
-        if (operands.isEmpty()) {
-            throw error("Expected expression");
-        }
-        if (operators.isEmpty()) {
-            return operands.get(0);
-        }
+        if (operands.isEmpty()) throw error("Expected expression");
+        if (operators.isEmpty()) return operands.get(0);
 
         for (int reductionPrecedence : REDUCTION_PRECEDENCE_ORDER) {
             reduceAtPrecedence(operands, operators, reductionPrecedence);
         }
 
-        if (!operators.isEmpty()) {
-            throw error("Invalid expression near operator: " + operators.get(0).getText(), operators.get(0));
-        }
-        if (operands.size() != 1) {
-            throw error("Invalid expression structure");
-        }
+        if (!operators.isEmpty()) throw error("Invalid expression near operator: " + operators.get(0).getText(), operators.get(0));
+        if (operands.size() != 1) throw error("Invalid expression structure");
         return operands.get(0);
     }
 
     private void reduceAtPrecedence(List<Expr> operands, List<Token> operators, int precedence) {
         if (operators.isEmpty()) return;
 
-        List<Expr> newOperands = new ArrayList<>();
-        List<Token> newOperators = new ArrayList<>();
+        List<Expr> newOperands = new ArrayList<Expr>();
+        List<Token> newOperators = new ArrayList<Token>();
 
         Expr current = operands.get(0);
         for (int i = 0; i < operators.size(); i++) {
@@ -1378,9 +1021,7 @@ public class ExpressionParser extends BaseParser {
 
     private Expr parsePrefix() {
         Token current = now();
-        if (current == null) {
-            throw error("Unexpected end of input in prefix expression");
-        }
+        if (current == null) throw error("Unexpected end of input in prefix expression");
 
         if (is(current, LT)) {
             Token markerToken = next(1);
@@ -1394,7 +1035,6 @@ public class ExpressionParser extends BaseParser {
             Expr operand = parsePrecedence(PREC_UNARY);
             return ASTFactory.createUnaryOp(opToken.getText(), operand, opToken);
         }
-        
         return parsePrimaryExpr();
     }
 
@@ -1414,20 +1054,13 @@ public class ExpressionParser extends BaseParser {
             Token levelToken = expect(ID);
             String levelName = levelToken.getText();
             if (!NamingValidator.isAllCaps(levelName)) {
-                throw error(
-                    "Self-call level after '<~' must be an integer literal or ALL_CAPS constant name: " + levelName,
-                    levelToken);
+                throw error("Self-call level after '<~' must be an integer literal or ALL_CAPS constant name: " + levelName, levelToken);
             }
-            // Name-only parse by design; parser has no scope/value table for closure-captured constants.
-            // Constant resolution/type checking therefore happens at runtime.
             selfCallLevelConstantName = levelName;
         }
-        if (!is(LPAREN)) {
-            throw error("'<~' cannot be used without '()'. Use '<~(...)' for self-calls.", selfToken);
-        }
+        if (!is(LPAREN)) throw error("'<~' cannot be used without '()'. Use '<~(...)' for self-calls.", selfToken);
 
-        MethodCall call =
-            ASTFactory.createMethodCall(SELF_CALL_PLACEHOLDER, SELF_CALL_PLACEHOLDER, ltToken);
+        MethodCall call = ASTFactory.createMethodCall(SELF_CALL_PLACEHOLDER, SELF_CALL_PLACEHOLDER, ltToken);
         call.isSelfCall = true;
         call.selfCallLevel = selfCallLevel;
         call.selfCallLevelConstantName = selfCallLevelConstantName;
@@ -1447,11 +1080,7 @@ public class ExpressionParser extends BaseParser {
         }
         expect(RPAREN);
         if (is(now(), PLUS, MINUS, MUL, DIV, MOD, EQ, NEQ, GT, LT, GTE, LTE)) {
-            throw error(
-                "Invalid trailing operation after '<~(...)'. Wrap the complete expression " +
-                "including the operator inside '<~(...)', for example '<~((a + b) * c)' " +
-                "instead of '<~(a + b) * c'.",
-                now());
+            throw error("Invalid trailing operation after '<~(...)'. Wrap the complete expression.", now());
         }
         return call;
     }
@@ -1463,7 +1092,7 @@ public class ExpressionParser extends BaseParser {
 
         if (is(ID)) {
             Token arrayNameToken = now();
-            String arrayName = expect(ID).getText();  // Lazy allocation
+            String arrayName = expect(ID).getText();
 
             if (isComparisonOp(now())) {
                 Token opToken = consume();
@@ -1473,30 +1102,23 @@ public class ExpressionParser extends BaseParser {
                 chainArgs.add(right);
 
                 Expr arrayExpr = ASTFactory.createIdentifier(arrayName, arrayNameToken);
-                EqualityChain chain = ASTFactory.createEqualityChain(arrayExpr, opToken.getText(), isAll, chainArgs, arrayNameToken, opToken, typeToken);
-                return chain;
+                return ASTFactory.createEqualityChain(arrayExpr, opToken.getText(), isAll, chainArgs, arrayNameToken, opToken, typeToken);
             } else {
                 throw error("Expected comparison operator after 'all/any <arrayName>'");
             }
         } else if (is(LBRACKET)) {
             expect(LBRACKET);
-            
             List<Expr> expressions = new ArrayList<Expr>();
 
             if (!is(RBRACKET)) {
                 expressions.add(parseExpr());
-                
-                if (!is(COMMA, RBRACKET)) {
-                    throw error("Boolean chain requires at least two expressions or a comma after the first expression.");
-                }                 
+                if (!is(COMMA, RBRACKET)) throw error("Boolean chain requires at least two expressions or a comma after the first expression.");                 
                 while (consume(COMMA)) {
                     expressions.add(parseExpr());
                 }
             }
             expect(RBRACKET);
-            
-            BooleanChain node = ASTFactory.createBooleanChain(isAll, expressions, typeToken);
-            return node;
+            return ASTFactory.createBooleanChain(isAll, expressions, typeToken);
         } else {
             throw error("Expected array variable or '[' after 'all/any'");
         }
@@ -1504,41 +1126,31 @@ public class ExpressionParser extends BaseParser {
 
     private Expr parseEqualityChain(Expr left, String operator) {
         Token leftToken = next(-1);
-        
         Token operatorToken = now();
         consume();
         
         Token chainTypeToken = now();
         boolean isAllChain = is(chainTypeToken, ALL);
         
-        if (!is(chainTypeToken, ALL, ANY)) {
-            throw error("Expected 'all' or 'any' after comparison operator", chainTypeToken);
-        }
-        
+        if (!is(chainTypeToken, ALL, ANY)) throw error("Expected 'all' or 'any' after comparison operator", chainTypeToken);
         consume();
         
         List<Expr> chainArgs = new ArrayList<Expr>();
-        
         if (is(LBRACKET)) {
             expect(LBRACKET);
             if (!is(RBRACKET)) {
                 chainArgs.add(parseChainArgument());
-                while (consume(COMMA)) {
-                    chainArgs.add(parseChainArgument());
-                }
+                while (consume(COMMA)) chainArgs.add(parseChainArgument());
             }
             expect(RBRACKET);
         } else if (is(ID)) {
             Token arrayNameToken = now();
-            String arrayName = expect(ID).getText();  // Lazy allocation
-            Expr arrayExpr = ASTFactory.createIdentifier(arrayName, arrayNameToken);
-            chainArgs.add(arrayExpr);
+            String arrayName = expect(ID).getText();
+            chainArgs.add(ASTFactory.createIdentifier(arrayName, arrayNameToken));
         } else {
             throw error("Expected array variable or '[' for array literal after 'all/any'");
         }
-        
-        EqualityChain chain = ASTFactory.createEqualityChain(left, operator, isAllChain, chainArgs, leftToken, operatorToken, chainTypeToken);
-        return chain;
+        return ASTFactory.createEqualityChain(left, operator, isAllChain, chainArgs, leftToken, operatorToken, chainTypeToken);
     }
 
     private Expr parseChainArgument() {
@@ -1547,17 +1159,11 @@ public class ExpressionParser extends BaseParser {
             Expr arg = parsePrimaryExpr();
             return ASTFactory.createUnaryOp("!", arg, bangToken);
         }
-        
-        if (is(LPAREN)) {
-            return parseArgumentList();
-        }
-        
+        if (is(LPAREN)) return parseArgumentList();
         if (is(ID) && is(next(), RBRACKET)) {
             Token idToken = now();
-            throw error("Redundant brackets around array variable '" + idToken.getText() + 
-                       "'. Use 'any " + idToken.getText() + "' instead of 'any[" + idToken.getText() + "]'", idToken);
+            throw error("Redundant brackets around array variable '" + idToken.getText() + "'.", idToken);
         }
-        
         return parsePrimaryExpr();
     }
 
@@ -1566,9 +1172,7 @@ public class ExpressionParser extends BaseParser {
         List<Expr> arguments = new ArrayList<Expr>();
         if (!is(RPAREN)) {
             arguments.add(parseExpr());
-            while (consume(COMMA)) {
-                arguments.add(parseExpr());
-            }
+            while (consume(COMMA)) arguments.add(parseExpr());
         }
         expect(RPAREN);
         return ASTFactory.createArgumentList(arguments, lparenToken);
@@ -1576,70 +1180,37 @@ public class ExpressionParser extends BaseParser {
 
     private Expr parseArrayLiteral() {
         Token lbracketToken = expect(LBRACKET);
-        
         List<Expr> elements = new ArrayList<Expr>();
         
         if (!is(RBRACKET)) {
-            if (isRangeStart()) {
-                elements.add(parseRangeExpression());
+            Expr first = parseExpr();
+            if (is(RANGE_DOTDOT) || is(TO)) {
+                elements.add(finishRangeExpression(first));
             } else {
-                elements.add(parseExpr());
+                elements.add(first);
             }
-            
             while (consume(COMMA)) {
-                if (isRangeStart()) {
-                    elements.add(parseRangeExpression());
+                Expr nextExpr = parseExpr();
+                if (is(RANGE_DOTDOT) || is(TO)) {
+                    elements.add(finishRangeExpression(nextExpr));
                 } else {
-                    elements.add(parseExpr());
+                    elements.add(nextExpr);
                 }
             }
         }
-        
         expect(RBRACKET);
         return ASTFactory.createArray(elements, lbracketToken);
     }
 
-    private boolean isRangeStart() {
-        save();
-        try {
-            if (!isExprStart(now())) return false;
-            parseExpr();
-            
-            if (is(RANGE_DOTDOT) || is(TO)) return true;
-            
-            return false;
-        } catch (ParseError e) {
-            return false;
-        } finally {
-            restore();
-        }
-    }
-
-    private Range parseRangeExpression() {
+    private Range finishRangeExpression(Expr start) {
+        Token rangeToken = consume();
+        Expr end = parseExpr();
         Expr step = null;
         Token stepToken = null;
-        Token rangeToken = null;
-        
-        Expr start = parseExpr();
-        
-        if (is(RANGE_DOTDOT)) {
-            rangeToken = expect(RANGE_DOTDOT);
-        } else if (is(TO)) {
-            rangeToken = expect(TO);
-        } else {
-            throw error("Expected range operator '..' or 'to'");
-        }
-        
-        Expr end = parseExpr();
-        
-        if (is(BY)) {
-            stepToken = expect(BY);
-            step = parseExpr();
-        } else if (is(RANGE_HASH)) {
-            stepToken = expect(RANGE_HASH);
+        if (is(BY) || is(RANGE_HASH)) {
+            stepToken = consume();
             step = parseExpr();
         }
-        
         return ASTFactory.createRange(step, start, end, stepToken, rangeToken);
     }
 
@@ -1652,82 +1223,44 @@ public class ExpressionParser extends BaseParser {
     }
 
     private boolean isConstructorCall() {
-        return attempt(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                Token first = now();
-                if (!is(first, ID)) return false;
-                
-                String idName = first.getText();  // Lazy allocation
-                
-                if (idName.length() == 0 || Character.isLowerCase(idName.charAt(0))) {
-                    return false;
-                }
-                
-                int pos = 1;
-                while (is(next(pos), WS, LINE_COMMENT, BLOCK_COMMENT)) {
-                    pos++;
-                }
-                
-                return is(next(pos), LPAREN);
-            }
-        });
+        Token first = now();
+        if (!is(first, ID)) return false;
+        String idName = first.getText();
+        if (idName.length() == 0 || Character.isLowerCase(idName.charAt(0))) return false;
+        return is(next(), LPAREN);
     }
 
     private boolean isMethodCallFollows() {
-        return attempt(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                Token first = now();
-                
-                boolean isValidName = (is(first, ID) || canBeMethod(first));
-                
-                if (!isValidName) return false;
-                
-                if (isConstructorCall()) {
-                    return false;
-                }
-                
-                int pos = 1;
-                while (is(next(pos), DOT)) {
-                    pos++;
-                    Token afterDot = next(pos);
-                    
-                    if (!(is(afterDot, ID) || canBeMethod(afterDot))) {
-                        return false;
-                    }
-                    pos++;
-                }
-                
-                Token afterDots = next(pos);
-                return is(afterDots, LPAREN);
-            }
-        });
+        Token first = now();
+        if (!(is(first, ID) || canBeMethod(first))) return false;
+        if (isConstructorCall()) return false;
+        
+        int pos = 1;
+        while (is(next(pos), DOT)) {
+            pos++;
+            Token afterDot = next(pos);
+            if (!(is(afterDot, ID) || canBeMethod(afterDot))) return false;
+            pos++;
+        }
+        return is(next(pos), LPAREN);
     }
 
     private boolean isSlotAccessExpression() {
-        if (!is(next(0), LBRACKET)) return false;
-
+        if (!is(now(), LBRACKET)) return false;
         int pos = getPosition() + 1;
         int depth = 1;
-
         while (pos < tokens.size() && depth > 0) {
             Token t = tokens.get(pos);
             if (is(t, LBRACKET)) depth++;
             else if (is(t, RBRACKET)) depth--;
             pos++;
         }
-
-        if (depth == 0 && pos < tokens.size()) {
-            Token t = tokens.get(pos);
-            return is(t, COLON);
-        }
+        if (depth == 0 && pos < tokens.size()) return is(tokens.get(pos), COLON);
         return false;
     }
 
     private boolean isTypeCast() {
         if (!is(next(0), LPAREN)) return false;
-        
         Token second = next();
         if (!isTypeStart(second)) return false;
         
@@ -1736,11 +1269,7 @@ public class ExpressionParser extends BaseParser {
         
         for (int i = 0; i < 50 && pos < tokens.size(); i++) {
             Token t = tokens.get(pos);
-            
-            if (parenDepth > 0 && isIllegalTypeToken(t)) {
-                return false;
-            }
-
+            if (parenDepth > 0 && isIllegalTypeToken(t)) return false;
             if (is(t, LPAREN)) parenDepth++;
             else if (is(t, RPAREN)) {
                 parenDepth--;
@@ -1759,28 +1288,20 @@ public class ExpressionParser extends BaseParser {
 
     private boolean isIllegalTypeToken(Token t) {
         if (is(t, INT_LIT, FLOAT_LIT, TEXT_LIT, BOOL_LIT)) return true;
-        
         if (is(t, PLUS, MINUS, MUL, DIV, MOD, EQ, NEQ, GT, LT, GTE, LTE)) return true;
-        
         return false;
     }
 
     private int getPrecedence(Token token) {
         if (nil(token)) return 0;
-        
         if (is(token, IS)) return PREC_IS;
-        
         if (is(token, SYMBOL)) {
             switch (token.symbol) {
                 case EQ: case NEQ: 
-                    if (isChainComparison(1)) {
-                        return PREC_CHAIN;
-                    }
+                    if (isChainComparison(1)) return PREC_CHAIN;
                     return PREC_EQUALITY;
                 case LT: case GT: case LTE: case GTE: 
-                    if (isChainComparison(1)) {
-                        return PREC_CHAIN;
-                    }
+                    if (isChainComparison(1)) return PREC_CHAIN;
                     return PREC_COMPARISON;
                 case PLUS: case MINUS: return PREC_TERM;
                 case MUL: case DIV: case MOD: return PREC_FACTOR;
@@ -1792,44 +1313,25 @@ public class ExpressionParser extends BaseParser {
     }
 
     private boolean isChainComparison(int offset) {
-        save();
-        try {
-            // Skip current operator
-            Token currentOp = now();
-            if (!isComparisonOp(currentOp)) return false;
-            
-            // Check if there's another comparison operator after an expression
-            int pos = getPosition() + offset;
-            
-            // Parse the next expression (but don't consume)
-            if (!isExprStart(next(pos))) return false;
-            
-            // Move past that expression
-            while (pos < tokens.size()) {
-                Token t = tokens.get(pos);
-                if (t == null) break;
-                
-                if (is(t, RPAREN, RBRACE, RBRACKET, COMMA)) {
-                    break;
-                }
-                
-                if (isComparisonOp(t) && t != currentOp) {
-                    return true;
-                }
-                
-                pos++;
-            }
-            
-            return false;
-        } finally {
-            restore();
+        Token currentOp = now();
+        if (!isComparisonOp(currentOp)) return false;
+        
+        int posOffset = offset;
+        if (!isExprStart(next(posOffset))) return false;
+        
+        while (true) {
+            Token t = next(posOffset);
+            if (t == null || t.type == EOF) break;
+            if (is(t, RPAREN, RBRACE, RBRACKET, COMMA)) break;
+            if (isComparisonOp(t) && t != currentOp) return true;
+            posOffset++;
         }
+        return false;
     }
 
     private boolean isChainFollows(int offset) {
         Token next = next(offset);
         if (next == null) return false;
-        
         if (is(next, ALL, ANY)) {
             Token after = next(offset + 1);
             return is(after, LBRACKET) || is(after, ID);

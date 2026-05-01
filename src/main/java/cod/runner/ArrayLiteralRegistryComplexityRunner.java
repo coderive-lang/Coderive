@@ -23,8 +23,8 @@ import java.util.List;
  * Compares historical eager behavior to current NaturalArray-backed behavior.
  */
 public final class ArrayLiteralRegistryComplexityRunner {
-    private static final int[] SIZES = new int[] {1000, 10000, 100000};
-    private static final int SAMPLES = 3;
+    private static final int[] SIZES = new int[] {1000, 10000, 100000, 10000000};
+    private static final int SAMPLES = 4;
 
     public static void main(String[] args) {
         TypeHandler typeHandler = new TypeHandler();

@@ -74,7 +74,7 @@ final class DeserializationVisitor {
         if ("Skip".equals(nodeName)) return new Skip();
         if ("Break".equals(nodeName)) return new Break();
         if ("Range".equals(nodeName)) return new Range();
-        if ("VoidReturn".equals(nodeName)) return new VoidReturn();
+        if ("Exit".equals(nodeName)) return new Exit();
         if ("Tuple".equals(nodeName)) return new Tuple();
         if ("ReturnSlotAssignment".equals(nodeName)) return new ReturnSlotAssignment();
         if ("SlotDeclaration".equals(nodeName)) return new SlotDeclaration();

@@ -268,15 +268,16 @@ public class CommandRunner extends BaseRunner {
                 && !ast.unit.imports.imports.isEmpty();
 
         if (hasImports) {
-            DebugSystem.info(NAME + LOG_TAG, "Generating indexes...");
+            // PROGRESSIVE: Generate index from parsed file only (no directory scan)
+            DebugSystem.info(NAME + LOG_TAG, "Generating progressive index...");
             generateIndexes(ast, interpreter);
 
             if (irManager != null) {
-                DebugSystem.info(NAME + LOG_TAG, "Generating IR...");
+                DebugSystem.info(NAME + LOG_TAG, "Generating IR for parsed files...");
                 compileToBytecode(ast);
             }
         } else {
-            DebugSystem.debug(NAME + LOG_TAG, "Skipping index/IR generation (no imports)");
+            DebugSystem.debug(NAME + LOG_TAG, "No imports, skipping index/IR generation");
         }
         
         if (!forceInterpreter
@@ -284,7 +285,6 @@ public class CommandRunner extends BaseRunner {
             && irManager != null
             && ast != null
             && ast.unit != null) {
-            prepareInterpreterForPTAC(ast);
             Type entryType = findMainType(ast);
             if (entryType != null) {
                 Artifact artifact = irManager.loadArtifact(ast.unit.name, entryType.name);
@@ -303,23 +303,6 @@ public class CommandRunner extends BaseRunner {
 
         interpreter.run(ast);
         DebugSystem.info(NAME + LOG_TAG, "Program interpretation completed");
-    }
-
-    private void prepareInterpreterForPTAC(Program ast) {
-        if (ast == null || ast.unit == null) {
-            return;
-        }
-        interpreter.setCurrentProgram(ast);
-        if (ast.unit.resolvedImports != null && !ast.unit.resolvedImports.isEmpty()) {
-            for (java.util.Map.Entry<String, Program> entry : ast.unit.resolvedImports.entrySet()) {
-                interpreter.getImportResolver().preloadImport(entry.getKey(), entry.getValue());
-            }
-        }
-        if (ast.unit.imports != null && ast.unit.imports.imports != null) {
-            for (String importName : ast.unit.imports.imports) {
-                interpreter.getImportResolver().registerImport(importName);
-            }
-        }
     }
     
     /**
@@ -401,7 +384,6 @@ public class CommandRunner extends BaseRunner {
                 }
             }
         }
-        return null;
+        return !ast.unit.types.isEmpty() ? ast.unit.types.get(0) : null;
     }
-
 }

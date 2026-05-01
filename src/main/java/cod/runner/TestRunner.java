@@ -32,7 +32,7 @@ public class TestRunner extends BaseRunner {
     private final String consoleRelativePath =
         "src/main/cod/demo/src/main/test/" + TEST_FILE + ".cod";
     private final String NAME = "TEST";
-    private final DebugSystem.Level level = DebugSystem.Level.DEBUG;
+    private final DebugSystem.Level level = DebugSystem.Level.INFO;
 
     private final Interpreter interpreter;
     private IRManager irManager;
@@ -58,7 +58,6 @@ public class TestRunner extends BaseRunner {
                     new Configuration() {
                         @Override
                         public void configure(RunnerConfig config) {
-                            // Enable DEBUG to see index generation logs
                             config.withDebugLevel(level);
                         }
                     });
@@ -185,13 +184,13 @@ public class TestRunner extends BaseRunner {
     private void executeWithManualInterpreter(Program ast) {
         DebugSystem.info(NAME + LOG_TAG, "Running Interpreter");
         
-        // Generate indexes before execution for O(1) import resolution
-        DebugSystem.info(NAME + LOG_TAG, "Generating indexes...");
+        // PROGRESSIVE: Generate index from parsed file only (no directory scan)
+        DebugSystem.info(NAME + LOG_TAG, "Generating progressive index...");
         generateIndexes(ast, interpreter);
         
-        // Compile to IR after index generation
+        // Compile to IR after parsing
         if (irManager != null && ast != null && ast.unit != null) {
-            DebugSystem.info(NAME + LOG_TAG, "Generating IR...");
+            DebugSystem.info(NAME + LOG_TAG, "Generating IR for parsed files...");
             compileToBytecode(ast);
         }
         
@@ -387,5 +386,4 @@ public class TestRunner extends BaseRunner {
         }
         return !ast.unit.types.isEmpty() ? ast.unit.types.get(0) : null;
     }
-
 }

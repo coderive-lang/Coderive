@@ -242,9 +242,6 @@ public void runType(Type typeNode) {
         for (Stmt stmt : mainMethod.body) {
             visitor.visit(stmt);
         }
-    } catch (EarlyExitException e) {
-        // Explicit `fin` from main() is a normal termination path.
-        DebugSystem.debug("INTERPRETER", "main() exited early for type: " + typeNode.name);
     } catch (ProgramError e) {
         throw e;
     } catch (Exception e) {
@@ -456,7 +453,7 @@ public void run(Object entryPoint) {
         
         // Look for class name (uppercase identifier not followed by '(')
         if (t.type == TokenType.ID && 
-            t.getLength() > 0 && 
+            t.length > 0 && 
             Character.isUpperCase(t.charAt(0))) {
             
             // Check if it's a class (followed by {, is, or with)
@@ -956,9 +953,9 @@ public void run(Object entryPoint) {
     return hasSlots ? slotValues : result;
   }
 
-  @SuppressWarnings("unchecked")
-  public Object evalMethodCall(
-      MethodCall call, ObjectInstance obj, Map<String, Object> locals, Method methodParam) {
+@SuppressWarnings("unchecked")
+public Object evalMethodCall(
+    MethodCall call, ObjectInstance obj, Map<String, Object> locals, Method methodParam) {
     
     if (call == null) {
         throw new InternalError("evalMethodCall called with null call");
@@ -1090,9 +1087,11 @@ public void run(Object entryPoint) {
 
         argValue = typeSystem.normalizeForDeclaredType(paramType, argValue);
 
+        // FIXED: Use bitmask constructor for union types
         if (paramType != null && paramType.indexOf('|') >= 0) {
-            String activeType = typeSystem.getConcreteType(typeSystem.unwrap(argValue));
-            argValue = new TypeHandler.Value(argValue, activeType, paramType);
+            int activeMask = typeSystem.getConcreteMask(typeSystem.unwrap(argValue));
+            int declaredMask = TypeHandler.parseTypeMask(paramType);
+            argValue = new TypeHandler.Value(argValue, activeMask, declaredMask);
         }
 
         methodLocals.put(param.name, argValue);
@@ -1172,7 +1171,7 @@ public void run(Object entryPoint) {
     }
 
     return result;
-  }
+}
 
   @SuppressWarnings("unchecked")
   public Object handleBuiltinMethod(Method node, MethodCall call) {

@@ -24,8 +24,8 @@ public class DeclarationParser extends BaseParser {
 
   private Type currentParsingClass = null;
   private Method currentParsingMethod = null;
-  public DeclarationParser(
-      ParserContext ctx, StatementParser statementParser, ImportResolver importResolver) {
+
+  public DeclarationParser(ParserContext ctx, StatementParser statementParser, ImportResolver importResolver) {
     super(ctx);
     this.statementParser = statementParser;
     this.slotParser = new SlotParser(this);
@@ -41,29 +41,16 @@ public class DeclarationParser extends BaseParser {
     return statementParser;
   }
 
-  private void setCurrentParsingClass(Type type) {
-    currentParsingClass = type;
-  }
-
-  private Type getCurrentParsingClass() {
-    return currentParsingClass;
-  }
-
-  private void setCurrentParsingMethod(Method method) {
-    currentParsingMethod = method;
-  }
+  private void setCurrentParsingClass(Type type) { currentParsingClass = type; }
+  private Type getCurrentParsingClass() { return currentParsingClass; }
+  private void setCurrentParsingMethod(Method method) { currentParsingMethod = method; }
 
   @Override
   protected boolean isUnsafeTypeContext() {
-    if (super.isUnsafeTypeContext()) {
-      return true;
-    }
-    if (currentParsingMethod != null && currentParsingMethod.isUnsafe) {
-      return true;
-    }
+    if (super.isUnsafeTypeContext()) return true;
+    if (currentParsingMethod != null && currentParsingMethod.isUnsafe) return true;
     return currentParsingClass != null && currentParsingClass.isUnsafe;
   }
-
 
   public void validateClassViralPolicies(Type type, Program currentProgram) {
     policyValidator.validateClassViralPolicies(type, currentProgram);
@@ -73,65 +60,40 @@ public class DeclarationParser extends BaseParser {
     policyValidator.validateAllPolicyMethods(type, currentProgram);
   }
   
-  private boolean wsComments(int offset) {
-    return is(next(offset), WS, LINE_COMMENT, BLOCK_COMMENT);
-  }
+  // === LL(0..3) Dispatches ===
 
   public boolean isConstructorDeclaration() {
-    return next(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            int offset = 0;
+    if (match(THIS, LPAREN)) return true;
+    if (match(VISIBILITY, THIS, LPAREN)) return true;
+    return false;
+  }
 
-            while (wsComments(offset)) offset++;
+  public boolean isPolicyDeclaration() {
+    if (match(POLICY, ID)) return true;
+    if (match(VISIBILITY, POLICY, ID)) return true;
+    return false;
+  }
 
-            Token first = next(offset);
-            if (!is(first, SHARE, LOCAL)) return false;
-            offset++;
-
-            while (wsComments(offset)) offset++;
-
-            Token maybeUnsafe = next(offset);
-            if (is(maybeUnsafe, UNSAFE)) {
-              offset++;
-              while (wsComments(offset)) offset++;
-            }
-
-            Token nameToken = next(offset);
-            boolean thisAsKeywordOrIDName = is(nameToken, THIS);
-
-            if (!thisAsKeywordOrIDName) return false;
-
-            offset++;
-            while (wsComments(offset)) offset++;
-
-            Token parenToken = next(offset);
-            return is(parenToken, LPAREN);
-          }
-        });
+  public boolean isPolicyMethodDeclarationStart() {
+    if (is(now(), BUILTIN, SHARE, LOCAL)) return false;
+    Token nameToken = now();
+    if (!(is(nameToken, ID) || canBeMethod(nameToken))) return false;
+    return match(ANY, LPAREN);
   }
 
   public Constructor parseConstructor() {
     Token startToken = now();
     Token thisToken = null;
 
-    if (is(SHARE, LOCAL)) {
-      consume();
-    }
-    if (is(UNSAFE)) {
-      consume();
-    }
+    if (is(SHARE, LOCAL)) consume();
 
     thisToken = now();
     Token current = consume();
     if (!is(current, THIS)) {
-      throw error(
-          "Constructor must be named 'this', found: " + current.getText(), startToken);
+      throw error("Constructor must be named 'this', found: " + current.getText(), startToken);
     }
 
     Constructor constructor = ASTFactory.createConstructor(null, null, thisToken);
-
     expect(LPAREN);
     if (!is(RPAREN)) {
       constructor.parameters.add(parseParameter());
@@ -141,16 +103,11 @@ public class DeclarationParser extends BaseParser {
     }
     expect(RPAREN);
 
-    if (isSlotDeclaration()) {
-      throw error(
-          "Constructors cannot have return slots contracts (:: syntax). "
-              + "Remove '::' and return type declarations from constructor.");
+    if (is(DOUBLE_COLON)) {
+      throw error("Constructors cannot have return slots contracts (:: syntax). Remove '::' and return type declarations.");
     }
-
     if (is(TILDE_ARROW)) {
-      throw error(
-          "Constructors cannot use inline return (~>) syntax. "
-              + "Use a block body: this(...) { ... }");
+      throw error("Constructors cannot use inline return (~>) syntax. Use a block body: this(...) { ... }");
     }
 
     boolean hasSuperCall = false;
@@ -166,34 +123,23 @@ public class DeclarationParser extends BaseParser {
       }
       expect(RBRACE);
     } else if (!hasSuperCall) {
-      throw error(
-          "Constructor must have a body: this(...) { ... } or this(...) super(...) { ... }");
+      throw error("Constructor must have a body: this(...) { ... } or this(...) super(...) { ... }");
     }
 
     return constructor;
   }
 
   private boolean looksLikeSuperConstructorCall() {
-    return attempt(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            if (!is(SUPER)) return false;
-            expect(SUPER);
-            return is(LPAREN);
-          }
-        });
+    return match(SUPER, LPAREN);
   }
 
   private MethodCall parseSuperConstructorCall() {
-    Token superToken = now();
-    expect(SUPER);
-
+    Token superToken = expect(SUPER);
     String zuper = SUPER.toString();
     MethodCall superCall = ASTFactory.createMethodCall(zuper, zuper, superToken);
     superCall.isSuperCall = true;
+    
     expect(LPAREN);
-
     if (!is(RPAREN)) {
       if (isNamedArgument()) {
         parseNamedArgumentList(superCall.arguments, superCall.argNames);
@@ -206,24 +152,12 @@ public class DeclarationParser extends BaseParser {
         }
       }
     }
-
     expect(RPAREN);
-
     return superCall;
   }
 
   private boolean isNamedArgument() {
-    return attempt(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            Token first = now();
-            if (!is(first, ID)) return false;
-
-            Token second = next();
-            return is(second, COLON);
-          }
-        });
+    return match(ID, COLON);
   }
 
   private void parseNamedArgumentList(List<Expr> args, List<String> argNames) {
@@ -231,13 +165,9 @@ public class DeclarationParser extends BaseParser {
       String argName = expect(ID).getText();
       expect(COLON);
       Expr value = statementParser.expressionParser.parseExpr();
-
       args.add(value);
       argNames.add(argName);
-
-      if (!is(COMMA)) {
-        break;
-      }
+      if (!is(COMMA)) break;
       expect(COMMA);
     } while (!is(RPAREN));
   }
@@ -254,12 +184,6 @@ public class DeclarationParser extends BaseParser {
             visibility = Keyword.SHARE;
         } else if (is(currentVisibility, LOCAL)) {
             visibility = Keyword.LOCAL;
-        } else {
-            throw error(
-                "Internal parser error: isVisibilityModifier() returned true for non-visibility keyword: '"
-                    + currentVisibility.getText()
-                    + "'",
-                visibilityToken);
         }
     }
 
@@ -271,12 +195,7 @@ public class DeclarationParser extends BaseParser {
     Token typeNameToken = now();
     String typeName = expect(ID).getText();
 
-    // Check if this is actually a method declaration (has parentheses after name)
-    if (is(LPAREN)) {
-        // This is a method, not a class - restore and let parseMethod handle it
-        restore();
-        return null; // Signal that this isn't a type
-    }
+    if (is(LPAREN)) return null;
 
     NamingValidator.validateClassName(typeName, typeNameToken);
 
@@ -287,7 +206,6 @@ public class DeclarationParser extends BaseParser {
     if (is(IS)) {
         extendToken = now();
         expect(IS);
-        
         parentToken = now();
         extendName = parseQualifiedName();
     }
@@ -297,7 +215,6 @@ public class DeclarationParser extends BaseParser {
     
     while (is(WITH)) {
         expect(WITH);
-        
         Token policyToken = now();
         String policyName = parseQualifiedName();
         implementedPolicies.add(policyName);
@@ -320,17 +237,14 @@ public class DeclarationParser extends BaseParser {
 
     setCurrentParsingClass(type);
 
-    if (type.isUnsafe) {
-      ctx.enterUnsafeDeclaration();
-    }
+    if (type.isUnsafe) ctx.enterUnsafeDeclaration();
     try {
       expect(LBRACE);
       while (!is(RBRACE)) {
           if (isFieldDeclaration()) {
               type.fields.add(parseField());
           } else if (isConstructorDeclaration()) {
-              Constructor constructor = parseConstructor();
-              type.constructors.add(constructor);
+              type.constructors.add(parseConstructor());
           } else if (isMethodDeclaration()) {
               Method method = parseMethod();
               method.associatedClass = type.name;
@@ -341,9 +255,7 @@ public class DeclarationParser extends BaseParser {
         }
       expect(RBRACE);
     } finally {
-      if (type.isUnsafe) {
-        ctx.exitUnsafeDeclaration();
-      }
+      if (type.isUnsafe) ctx.exitUnsafeDeclaration();
       setCurrentParsingClass(null);
     }
     return type;
@@ -354,58 +266,37 @@ public class DeclarationParser extends BaseParser {
     Token visibilityToken = null;
     if (is(SHARE, LOCAL)) {
       visibilityToken = consume();
-      if (is(visibilityToken, SHARE)) {
-        visibility = Keyword.SHARE;
-      } else if (is(visibilityToken, LOCAL)) {
-        visibility = Keyword.LOCAL;
-      }
+      if (is(visibilityToken, SHARE)) visibility = Keyword.SHARE;
+      else if (is(visibilityToken, LOCAL)) visibility = Keyword.LOCAL;
     }
 
-    if (!is(POLICY)) {
-      throw error("Expected 'policy' keyword");
-    }
     expect(POLICY);
-
     Token nameToken = now();
     String policyName = expect(ID).getText();
-
     NamingValidator.validatePolicyName(policyName, nameToken);
 
     List<String> composedPolicies = new ArrayList<String>();
     if (is(WITH)) {
       expect(WITH);
       composedPolicies.add(parseQualifiedName());
-
-      while (consume(COMMA)) {
-        composedPolicies.add(parseQualifiedName());
-      }
+      while (consume(COMMA)) composedPolicies.add(parseQualifiedName());
     }
 
     Policy policy = ASTFactory.createPolicy(policyName, visibility, nameToken);
     policy.composedPolicies = composedPolicies;
 
-    if (!is(LBRACE)) {
-      throw error("Expected '{' after policy name");
-    }
     expect(LBRACE);
-
     while (!is(RBRACE)) {
       if (isPolicyMethodDeclarationStart()) {
-        PolicyMethod method = parsePolicyMethod();
-        policy.methods.add(method);
+        policy.methods.add(parsePolicyMethod());
       } else if (!is(RBRACE)) {
-        Token current = now();
-        throw error(
-            "Policy can only contain method declarations and cannot have a body, found: " + current.getText(),
-            current);
+        throw error("Policy can only contain method declarations and cannot have a body.", now());
       }
     }
-
     expect(RBRACE);
 
     policyValidator.registerLocalPolicy(policy);
     policyValidator.validatePolicyComposition(policy, nameToken);
-
     return policy;
   }
 
@@ -413,91 +304,24 @@ public class DeclarationParser extends BaseParser {
     Token methodNameToken = now();
     String methodName;
 
-    if (canBeMethod(now())) {
-      methodName = consume().getText();
-    } else if (is(ID)) {
-      methodName = expect(ID).getText();
-    } else {
-      throw error("Expected method name in policy declaration");
-    }
+    if (canBeMethod(now())) methodName = consume().getText();
+    else if (is(ID)) methodName = expect(ID).getText();
+    else throw error("Expected method name in policy declaration");
 
     NamingValidator.validatePolicyMethodName(methodName, methodNameToken);
-
     PolicyMethod method = ASTFactory.createPolicyMethod(methodName, methodNameToken);
-    if (!is(LPAREN)) {
-      throw error("Expected '(' after method name");
-    }
+    
     expect(LPAREN);
-
     if (!is(RPAREN)) {
       method.parameters.add(parseParameter());
-      while (consume(COMMA)) {
-        method.parameters.add(parseParameter());
-      }
-    }
-
-    if (!is(RPAREN)) {
-      throw error("Expected ')' after parameters");
+      while (consume(COMMA)) method.parameters.add(parseParameter());
     }
     expect(RPAREN);
 
-    if (isSlotDeclaration()) {
+    if (is(DOUBLE_COLON)) {
       method.returnSlots = slotParser.parseSlotContract();
     }
-
     return method;
-  }
-
-  public boolean isPolicyMethodDeclarationStart() {
-    return attempt(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            ParserState savedState = getCurrentState();
-            try {
-              if (is(BUILTIN, SHARE, LOCAL)) {
-                return false;
-              }
-
-              Token nameToken = now();
-
-              boolean isValidName = is(nameToken, ID) || canBeMethod(nameToken);
-
-              if (!isValidName) return false;
-
-              consume();
-              
-              return is(LPAREN);
-            } finally {
-              setState(savedState);
-            }
-          }
-        });
-  }
-
-  public boolean isPolicyDeclaration() {
-    return attempt(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            ParserState savedState = getCurrentState();
-            try {
-              if (is(SHARE, LOCAL)) {
-                consume();
-              }
-
-              if (!is(POLICY)) {
-                return false;
-              }
-
-              consume();
-              
-              return is(ID);
-            } finally {
-              setState(savedState);
-            }
-          }
-        });
   }
 
   public Method parseMethod() {
@@ -514,60 +338,28 @@ public class DeclarationParser extends BaseParser {
       sawVisibility = true;
       visibilityToken = now();
       Token currentVisibility = consume();
-
-      if (is(currentVisibility, SHARE)) {
-        visibility = Keyword.SHARE;
-      } else if (is(currentVisibility, LOCAL)) {
-        visibility = Keyword.LOCAL;
-      } else {
-        throw error(
-            "Internal parser error: isVisibilityModifier() returned true for non-visibility keyword: '"
-                + currentVisibility.getText()
-                + "'",
-            visibilityToken);
-      }
+      if (is(currentVisibility, SHARE)) visibility = Keyword.SHARE;
+      else if (is(currentVisibility, LOCAL)) visibility = Keyword.LOCAL;
     }
 
     boolean consumedModifier = true;
     while (consumedModifier) {
       consumedModifier = false;
-      if (is(POLICY)) {
-        expect(POLICY);
-        isPolicyMethod = true;
-        consumedModifier = true;
-        continue;
-      }
-      if (is(BUILTIN)) {
-        expect(BUILTIN);
-        isBuiltin = true;
-        consumedModifier = true;
-        continue;
-      }
-      if (is(UNSAFE)) {
-        expect(UNSAFE);
-        isUnsafeMethod = true;
-        consumedModifier = true;
-      }
+      if (is(POLICY)) { expect(POLICY); isPolicyMethod = true; consumedModifier = true; continue; }
+      if (is(BUILTIN)) { expect(BUILTIN); isBuiltin = true; consumedModifier = true; continue; }
+      if (is(UNSAFE)) { expect(UNSAFE); isUnsafeMethod = true; consumedModifier = true; }
     }
 
-    if (is(SHARE, LOCAL)) {
-      throw error("Visibility modifier must appear before other modifiers in method declarations", now());
-    }
+    if (is(SHARE, LOCAL)) throw error("Visibility modifier must appear before other modifiers in method declarations", now());
 
     if (isUnsafeMethod && !sawVisibility) {
-      throw error(
-          "Unsafe methods require an explicit visibility modifier before 'unsafe'. "
-              + "Expected: share unsafe methodName(...) or local unsafe methodName(...)",
-          startToken);
+      throw error("Unsafe methods require an explicit visibility modifier before 'unsafe'.", startToken);
     }
 
     if (isPolicyMethod && !sawVisibility) {
       Type currentClass = getCurrentParsingClass();
-      if (!nil(currentClass)) {
-        visibility = currentClass.visibility;
-      } else {
-        visibility = Keyword.SHARE;
-      }
+      if (!nil(currentClass)) visibility = currentClass.visibility;
+      else visibility = Keyword.SHARE;
     }
 
     String methodName;
@@ -578,8 +370,7 @@ public class DeclarationParser extends BaseParser {
     } else if (is(ID)) {
         methodName = expect(ID).getText();
     } else {
-        throw error(
-            "Expected method name (identifier or allowed keyword)");
+        throw error("Expected method name (identifier or allowed keyword)");
     }
 
     NamingValidator.validateMethodName(methodName, startToken);
@@ -589,9 +380,7 @@ public class DeclarationParser extends BaseParser {
     method.isPolicyMethod = isPolicyMethod;
     method.isUnsafe = isUnsafeMethod;
 
-    if (method.isUnsafe) {
-      ctx.enterUnsafeDeclaration();
-    }
+    if (method.isUnsafe) ctx.enterUnsafeDeclaration();
     setCurrentParsingMethod(method);
 
     try {
@@ -601,9 +390,8 @@ public class DeclarationParser extends BaseParser {
           int parenDepth = 1;
           while (!is(EOF) && parenDepth > 0) {
               Token t = now();
-              if (is(t, LPAREN)) {
-                  parenDepth++;
-              } else if (is(t, RPAREN)) {
+              if (is(t, LPAREN)) parenDepth++;
+              else if (is(t, RPAREN)) {
                   parenDepth--;
                   if (parenDepth == 0) {
                       expect(RPAREN);
@@ -615,15 +403,12 @@ public class DeclarationParser extends BaseParser {
       } else {
           if (!is(RPAREN)) {
               method.parameters.add(parseParameter());
-              while (consume(COMMA)) {
-                  method.parameters.add(parseParameter());
-              }
+              while (consume(COMMA)) method.parameters.add(parseParameter());
           }
           expect(RPAREN);
       }
 
-      // Parse slot contract if present (:: syntax)
-      if (isSlotDeclaration()) {
+      if (is(DOUBLE_COLON)) {
           method.returnSlots = slotParser.parseSlotContract();
       } else {
           method.returnSlots = new ArrayList<Slot>();
@@ -632,70 +417,39 @@ public class DeclarationParser extends BaseParser {
       if (isBuiltin) {
           while (getPosition() < tokens.size()) {
               Token current = now();
-
-              if (is(current, RBRACE)
-                  || is(current, SHARE, LOCAL, BUILTIN, POLICY, UNSAFE)) {
-                  break;
-              }
-
+              if (is(current, RBRACE) || is(current, SHARE, LOCAL, BUILTIN, POLICY, UNSAFE)) break;
               consume();
           }
 
           if (is(TILDE_ARROW, LBRACE)) {
-              Token current = now();
-              throw error(
-                  "Builtin method '"
-                      + methodName
-                      + "' cannot have a body. "
-                      + "Builtin methods are only declarations, not implementations.\n"
-                      + "Remove '~>' or '{...}' after builtin method signature.",
-                  current);
+              throw error("Builtin method '" + methodName + "' cannot have a body.", now());
           }
-
           return method;
       }
 
-      // Parse method body
       if (is(TILDE_ARROW)) {
-          Token tildeArrowToken = now();
-          expect(TILDE_ARROW);
-
-          List<SlotAssignment> slotAssignments =
-              slotParser.parseParenthesizedSlotAssignments(tildeArrowToken);
+          Token tildeArrowToken = expect(TILDE_ARROW);
+          List<SlotAssignment> slotAssignments = slotParser.parseParenthesizedSlotAssignments(tildeArrowToken);
 
           if (slotAssignments.size() == 1) {
               method.body.add(slotAssignments.get(0));
           } else {
-              MultipleSlotAssignment multiAssign =
-                  ASTFactory.createMultipleSlotAsmt(slotAssignments, tildeArrowToken);
-              method.body.add(multiAssign);
+              method.body.add(ASTFactory.createMultipleSlotAsmt(slotAssignments, tildeArrowToken));
           }
-
       } else if (is(LBRACE)) {
           expect(LBRACE);
           while (!is(RBRACE)) {
               method.body.add(statementParser.parseStmt());
           }
           expect(RBRACE);
-          
           ReturnContractValidator.validateMethodReturnContract(method, currentParsingClass, startToken);
       } else {
-          Token current = now();
-          throw error(
-              "Expected '~>' or '{' after method signature, but found "
-                  + getTypeName(current.type)
-                  + " ('"
-                  + current.getText()
-                  + "')",
-              current);
+          throw error("Expected '~>' or '{' after method signature.", now());
       }
     } finally {
       setCurrentParsingMethod(null);
-      if (method.isUnsafe) {
-        ctx.exitUnsafeDeclaration();
-      }
+      if (method.isUnsafe) ctx.exitUnsafeDeclaration();
     }
-
     return method;
 }
 
@@ -705,31 +459,24 @@ public class DeclarationParser extends BaseParser {
 
   public Field parseField() {
     Token startToken = now();
-
     Keyword visibility = null;
-    Token visibilityToken = null;
+    
     if (is(SHARE, LOCAL)) {
-      visibilityToken = consume();
-      if (is(visibilityToken, SHARE)) {
-        visibility = SHARE;
-      } else if (is(visibilityToken, LOCAL)) {
-        visibility = LOCAL;
-      }
+      Token visibilityToken = consume();
+      if (is(visibilityToken, SHARE)) visibility = SHARE;
+      else if (is(visibilityToken, LOCAL)) visibility = LOCAL;
     }
 
     Token fieldNameToken = now();
     String fieldName = expect(ID).getText();
 
     expect(COLON);
-
     String fieldType = parseTypeReference();
 
     NamingValidator.validateFieldName(fieldName, startToken);
 
     Field field = ASTFactory.createField(fieldName, fieldType, fieldNameToken);
-    if (visibility != null) {
-       field.visibility = visibility;
-    }
+    if (visibility != null) field.visibility = visibility;
 
     if (consume(ASSIGN)) {
       field.value = statementParser.expressionParser.parseExpr();
@@ -738,40 +485,32 @@ public class DeclarationParser extends BaseParser {
     if (NamingValidator.isAllCaps(fieldName) && field.value == null) {
       throw error("Constant field '" + fieldName + "' must have an initial value", fieldNameToken);
     }
-
     return field;
   }
 
   public Param parseParameter() {
     Token startToken = now();
+    
+    if (!is(ID)) {
+      throw error("Expected parameter name (identifier), but found " + 
+                  getTypeName(startToken.type) + " ('" + startToken.getText() + "'). " +
+                  "If this is a script, ensure it is a valid top-level statement.");
+    }
+    
     String name = expect(ID).getText();
 
-    if (is(DOUBLE_COLON_ASSIGN)) {
-      expect(DOUBLE_COLON_ASSIGN);
-
+    if (consume(DOUBLE_COLON_ASSIGN)) {
       Expr defaultValue = statementParser.expressionParser.parsePrimaryExpr();
-
       if (!isSimpleLiteral(defaultValue)) {
-        throw error(
-            "Parameter inference (:=) can only be used with literals. "
-                + "Use explicit typing for expressions: "
-                + name
-                + ": Type = expression",
-            startToken);
+        throw error("Parameter inference (:=) can only be used with literals. Use explicit typing for expressions.", startToken);
       }
 
       String inferredType = inferTypeFromLiteral(defaultValue);
       if (inferredType == null) {
-        throw error(
-            "Cannot infer parameter type from literal. Use explicit typing: "
-                + name
-                + ": Type = "
-                + defaultValue,
-            startToken);
+        throw error("Cannot infer parameter type from literal. Use explicit typing.", startToken);
       }
 
       NamingValidator.validateParameterName(name, startToken);
-
       Param param = ASTFactory.createParam(name, inferredType, defaultValue, true, startToken);
       param.hasDefaultValue = true;
       return param;
@@ -787,63 +526,36 @@ public class DeclarationParser extends BaseParser {
 
     NamingValidator.validateParameterName(name, startToken);
     Param param = ASTFactory.createParam(name, type, defaultValue, false, startToken);
-    if (defaultValue != null) {
-      param.hasDefaultValue = true;
-    }
+    if (defaultValue != null) param.hasDefaultValue = true;
     return param;
   }
 
   private boolean isSimpleLiteral(Expr expr) {
     if (expr == null) return false;
-    
-    if (expr instanceof IntLiteral ||
-        expr instanceof FloatLiteral ||
-        expr instanceof BoolLiteral ||
-        expr instanceof NoneLiteral) {
-      return true;
-    }
-    
-    if (expr instanceof TextLiteral) {
-      return true;
-    }
-
+    if (expr instanceof IntLiteral || expr instanceof FloatLiteral || expr instanceof BoolLiteral || expr instanceof NoneLiteral || expr instanceof TextLiteral) return true;
     if (expr instanceof Array) {
       Array arr = (Array) expr;
-
       if (arr.elements.size() == 1 && arr.elements.get(0) instanceof Range) {
         Range range = (Range) arr.elements.get(0);
-        return isSimpleLiteral(range.start)
-            && isSimpleLiteral(range.end)
-            && (nil(range.step) || isSimpleLiteral(range.step));
+        return isSimpleLiteral(range.start) && isSimpleLiteral(range.end) && (nil(range.step) || isSimpleLiteral(range.step));
       }
-
-      for (Expr elem : arr.elements) {
-        if (!isSimpleLiteral(elem)) return false;
-      }
+      for (Expr elem : arr.elements) if (!isSimpleLiteral(elem)) return false;
       return true;
     }
-
     if (expr instanceof Range) {
       Range range = (Range) expr;
-      return isSimpleLiteral(range.start)
-          && isSimpleLiteral(range.end)
-          && (nil(range.step) || isSimpleLiteral(range.step));
+      return isSimpleLiteral(range.start) && isSimpleLiteral(range.end) && (nil(range.step) || isSimpleLiteral(range.step));
     }
-
     if (expr instanceof Tuple) {
       Tuple tuple = (Tuple) expr;
-      for (Expr elem : tuple.elements) {
-        if (!isSimpleLiteral(elem)) return false;
-      }
+      for (Expr elem : tuple.elements) if (!isSimpleLiteral(elem)) return false;
       return true;
     }
-
     return false;
   }
 
   private String inferTypeFromLiteral(Expr expr) {
     if (nil(expr)) return null;
-
     if (expr instanceof IntLiteral) return INT.toString();
     if (expr instanceof FloatLiteral) return FLOAT.toString();
     if (expr instanceof BoolLiteral) return BOOL.toString();
@@ -853,118 +565,45 @@ public class DeclarationParser extends BaseParser {
     if (expr instanceof Array) {
       Array arr = (Array) expr;
       if (arr.elements.isEmpty()) return null;
-
-      if (arr.elements.size() == 1 && arr.elements.get(0) instanceof Range) {
-        return "[]";
-      }
-
+      if (arr.elements.size() == 1 && arr.elements.get(0) instanceof Range) return "[]";
       String elementType = inferTypeFromLiteral(arr.elements.get(0));
-      if (elementType != null) {
-        return "[" + elementType + "]";
-      }
+      if (elementType != null) return "[" + elementType + "]";
       return null;
     }
-
-    if (expr instanceof Range) {
-      return "[]";
-    }
-
+    if (expr instanceof Range) return "[]";
     if (expr instanceof Tuple) {
       Tuple tuple = (Tuple) expr;
       if (tuple.elements.isEmpty()) return null;
-
       StringBuilder sb = new StringBuilder("(");
       for (int i = 0; i < tuple.elements.size(); i++) {
         String elemType = inferTypeFromLiteral(tuple.elements.get(i));
         if (elemType == null) return null;
-
         if (i > 0) sb.append(",");
         sb.append(elemType);
       }
       sb.append(")");
       return sb.toString();
     }
-
     return null;
   }
 
-  public boolean isSlotDeclaration() {
-    return is(DOUBLE_COLON);
-  }
-
   private boolean isMethodDeclaration() {
-    return next(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            int offset = 0;
-
-            while (wsComments(offset)) offset++;
-
-            Token first = next(offset);
-            if (nil(first)) return false;
-
-            if (is(first, SHARE, LOCAL, BUILTIN, POLICY, UNSAFE)) {
-              offset++;
-              while (wsComments(offset)) offset++;
-              Token maybeMoreModifier = next(offset);
-              while (is(maybeMoreModifier, BUILTIN, POLICY, UNSAFE)) {
-                offset++;
-                while (wsComments(offset)) offset++;
-                maybeMoreModifier = next(offset);
-              }
-            }
-
-            Token nameToken = next(offset);
-            
-            boolean isValidName = is(nameToken, ID) || canBeMethod(nameToken);
-
-            if (!isValidName) return false;
-
-            offset++;
-            while (wsComments(offset)) offset++;
-
-            Token parenToken = next(offset);
-            return is(parenToken, LPAREN);
-          }
-        });
+    int offset = 0;
+    if (is(next(offset), SHARE, LOCAL, BUILTIN, POLICY, UNSAFE)) {
+        offset++;
+        while (is(next(offset), BUILTIN, POLICY, UNSAFE)) offset++;
+    }
+    Token nameToken = next(offset);
+    if (!(is(nameToken, ID) || canBeMethod(nameToken))) return false;
+    offset++;
+    return is(next(offset), LPAREN);
   }
 
   private boolean isFieldDeclaration() {
-    return next(
-        new ParserAction<Boolean>() {
-          @Override
-          public Boolean parse() throws ParseError {
-            if (is(SHARE, LOCAL)) {
-              consume();
-            }
-
-            if (!is(ID)) {
-                return false;
-            }
-            expect(ID);
-
-            if (!is(COLON)) {
-                return false;
-            }
-            expect(COLON);
-
-            if (!isTypeStart(now())) {
-                return false;
-            }
-
-            try {
-                parseTypeReference();
-            } catch (ParseError e) {
-                return false;
-            }
-
-            if (is(LPAREN)) {
-                return false;
-            }
-
-            return true;
-          }
-        });
+    int offset = 0;
+    if (is(next(offset), SHARE, LOCAL)) offset++;
+    if (!is(next(offset), ID)) return false;
+    offset++;
+    return is(next(offset), COLON);
   }
 }

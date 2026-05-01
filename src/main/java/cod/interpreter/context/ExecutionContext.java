@@ -1,7 +1,6 @@
 package cod.interpreter.context;
 
 import cod.ast.node.Type;
-import cod.debug.DebugSystem;
 import cod.error.InternalError;
 import cod.interpreter.handler.TypeHandler;
 import java.util.*;
@@ -16,6 +15,10 @@ public class ExecutionContext {
     // Locals with scope stacking
     private List<Map<String, Object>> localsStack;
     private List<Map<String, String>> localTypesStack;
+    
+    // O(1) Flattened lookup cache for Lexical Addressing speed
+    private Map<String, Object> flattenedLocalsCache = new HashMap<String, Object>();
+    private boolean flattenedDirty = true;
     
     // Slot values (method return slots) - OPTIMIZED
     private Map<String, Object> slotValues;
@@ -64,17 +67,17 @@ public class ExecutionContext {
         return currentContext.get();
     }
     
-/**
- * Get the base (root) scope map that contains all variables.
- * This is the same map that was passed in from REPLRunner.
- */
-public Map<String, Object> getLocalsMap() {
-    if (localsStack == null || localsStack.isEmpty()) {
-        return new HashMap<String, Object>();
+    /**
+     * Get the base (root) scope map that contains all variables.
+     * This is the same map that was passed in from REPLRunner.
+     */
+    public Map<String, Object> getLocalsMap() {
+        if (localsStack == null || localsStack.isEmpty()) {
+            return new HashMap<String, Object>();
+        }
+        // Return the root scope (index 0) which contains all variables
+        return localsStack.get(0);
     }
-    // Return the root scope (index 0) which contains all variables
-    return localsStack.get(0);
-}
     
     /**
      * Clear the current context for this thread
@@ -180,6 +183,7 @@ public Map<String, Object> getLocalsMap() {
         // Build optimized slot access structures
         optimizeSlotAccess();
         registerInitialBorrowState(initialLocals);
+        this.flattenedDirty = true;
     }
     
     /**
@@ -327,6 +331,7 @@ public Map<String, Object> getLocalsMap() {
     public void pushScope() {
         localsStack.add(new HashMap<String, Object>());
         localTypesStack.add(new HashMap<String, String>());
+        flattenedDirty = true;
     }
     
     public void popScope() {
@@ -336,6 +341,7 @@ public Map<String, Object> getLocalsMap() {
                 unregisterBorrowsFromValue(value);
             }
             localTypesStack.remove(localTypesStack.size() - 1);
+            flattenedDirty = true;
         }
     }
     
@@ -357,51 +363,47 @@ public Map<String, Object> getLocalsMap() {
     public List<Map<String, String>> getLocalTypesStack() {
         return localTypesStack;
     }
-    
+
+    // ========== OPTIMIZED VARIABLE LOOKUP ==========
     public Object getVariable(String name) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, "executionContext.getVariable");
-        try {
-            if (name == null) return null;
-            
-            // Check locals (from innermost to outermost)
-            for (int i = localsStack.size() - 1; i >= 0; i--) {
-                Map<String, Object> scope = localsStack.get(i);
-                Object value = scope.get(name);
-                if (value != null || scope.containsKey(name)) {
-                    return value;
-                }
-            }
-            
-            return null;
-        } finally {
-            stopPerfTimer(timer);
+        if (name == null) return null;
+        
+        if (flattenedDirty) {
+            refreshFlattenedCache();
         }
+        return flattenedLocalsCache.get(name);
+    }
+    
+    private void refreshFlattenedCache() {
+        flattenedLocalsCache.clear();
+        // Traverse from bottom to top so that inner scopes correctly overwrite outer ones
+        for (Map<String, Object> scope : localsStack) {
+            flattenedLocalsCache.putAll(scope);
+        }
+        flattenedDirty = false;
     }
     
     public void setVariable(String name, Object value) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, "executionContext.setVariable");
-        try {
-            if (name == null) {
-                throw new InternalError("setVariable called with null name");
-            }
-            
-            // Check if variable exists in any scope
-            for (int i = localsStack.size() - 1; i >= 0; i--) {
-                Map<String, Object> scope = localsStack.get(i);
-                if (scope.containsKey(name)) {
-                    Object previous = scope.put(name, value);
-                    replaceTrackedValue(previous, value);
-                    return;
-                }
-            }
-            
-            // Create in current scope
-            Map<String, Object> currentScope = localsStack.get(localsStack.size() - 1);
-            Object previous = currentScope.put(name, value);
-            replaceTrackedValue(previous, value);
-        } finally {
-            stopPerfTimer(timer);
+        if (name == null) {
+            throw new InternalError("setVariable called with null name");
         }
+        
+        // Check if variable exists in any scope
+        for (int i = localsStack.size() - 1; i >= 0; i--) {
+            Map<String, Object> scope = localsStack.get(i);
+            if (scope.containsKey(name)) {
+                Object previous = scope.put(name, value);
+                replaceTrackedValue(previous, value);
+                flattenedDirty = true;
+                return;
+            }
+        }
+        
+        // Create in current scope
+        Map<String, Object> currentScope = localsStack.get(localsStack.size() - 1);
+        Object previous = currentScope.put(name, value);
+        replaceTrackedValue(previous, value);
+        flattenedDirty = true;
     }
 
     public int resolveVariableScopeIndex(String name) {
@@ -444,6 +446,7 @@ public Map<String, Object> getLocalsMap() {
         Map<String, Object> scope = localsStack.get(scopeIndex);
         Object previous = scope.put(name, value);
         replaceTrackedValue(previous, value);
+        flattenedDirty = true;
     }
 
     public void setVariableTypeAtScope(int scopeIndex, String name, String type) {
@@ -486,43 +489,45 @@ public Map<String, Object> getLocalsMap() {
         return all;
     }
 
-/**
- * Remove a variable from the current scope
- * Returns the removed value, or null if not found
- */
-public Object removeVariable(String name) {
-    if (name == null) return null;
-    
-    // Check from innermost to outermost scope
-    for (int i = localsStack.size() - 1; i >= 0; i--) {
-        Map<String, Object> scope = localsStack.get(i);
-        if (scope.containsKey(name)) {
-            Object removed = scope.remove(name);
-            unregisterBorrowsFromValue(removed);
-            return removed;
+    /**
+     * Remove a variable from the current scope
+     * Returns the removed value, or null if not found
+     */
+    public Object removeVariable(String name) {
+        if (name == null) return null;
+        
+        // Check from innermost to outermost scope
+        for (int i = localsStack.size() - 1; i >= 0; i--) {
+            Map<String, Object> scope = localsStack.get(i);
+            if (scope.containsKey(name)) {
+                Object removed = scope.remove(name);
+                unregisterBorrowsFromValue(removed);
+                flattenedDirty = true;
+                return removed;
+            }
         }
+        return null;
     }
-    return null;
-}
 
-/**
- * Remove a variable from all scopes (for cleanup)
- * Returns true if found and removed
- */
-public boolean removeVariableFromAllScopes(String name) {
-    if (name == null) return false;
-    
-    boolean found = false;
-    for (int i = localsStack.size() - 1; i >= 0; i--) {
-        Map<String, Object> scope = localsStack.get(i);
-        if (scope.containsKey(name)) {
-            Object removed = scope.remove(name);
-            unregisterBorrowsFromValue(removed);
-            found = true;
+    /**
+     * Remove a variable from all scopes (for cleanup)
+     * Returns true if found and removed
+     */
+    public boolean removeVariableFromAllScopes(String name) {
+        if (name == null) return false;
+        
+        boolean found = false;
+        for (int i = localsStack.size() - 1; i >= 0; i--) {
+            Map<String, Object> scope = localsStack.get(i);
+            if (scope.containsKey(name)) {
+                Object removed = scope.remove(name);
+                unregisterBorrowsFromValue(removed);
+                found = true;
+            }
         }
+        if (found) flattenedDirty = true;
+        return found;
     }
-    return found;
-}
     
     public ExecutionContext copyWithVariable(String name, Object value, String type) {
         Map<String, Object> newLocals = locals();
@@ -616,10 +621,6 @@ public boolean removeVariableFromAllScopes(String name) {
         }
 
         if (unwrapped instanceof List) {
-            String listClassName = unwrapped.getClass().getName();
-            if (!listClassName.startsWith("java.util.")) {
-                return;
-            }
             for (Object element : (List<Object>) unwrapped) {
                 collectBorrowsRecursive(element, delta);
             }
@@ -645,25 +646,6 @@ public boolean removeVariableFromAllScopes(String name) {
             if (countsByIndex.isEmpty()) {
                 activeBorrowsByContainer.remove(container);
             }
-        }
-    }
-
-    private static boolean isTimerEnabled(DebugSystem.Level level) {
-        DebugSystem.Level current = DebugSystem.getLevel();
-        return current != DebugSystem.Level.OFF && current.getLevel() >= level.getLevel();
-    }
-
-    private static String startPerfTimer(DebugSystem.Level level, String operation) {
-        if (!isTimerEnabled(level)) {
-            return null;
-        }
-        DebugSystem.startTimer(level, operation);
-        return operation;
-    }
-
-    private static void stopPerfTimer(String timerName) {
-        if (timerName != null) {
-            DebugSystem.stopTimer(timerName);
         }
     }
 }

@@ -18,19 +18,19 @@ public class AssignmentHandler {
 
     private final TypeHandler typeSystem;
     private final Interpreter interpreter;
-    private final ExpressionHandler expressionHandler;
+    private final ExpressionHandler exprHandler;
     private final InterpreterVisitor dispatcher;
     
     public AssignmentHandler(TypeHandler typeSystem, Interpreter interpreter, 
-                           ExpressionHandler expressionHandler, InterpreterVisitor dispatcher) {
+                           ExpressionHandler exprHandler, InterpreterVisitor dispatcher) {
         if (typeSystem == null) {
             throw new InternalError("AssignmentHandler constructed with null typeSystem");
         }
         if (interpreter == null) {
             throw new InternalError("AssignmentHandler constructed with null interpreter");
         }
-        if (expressionHandler == null) {
-            throw new InternalError("AssignmentHandler constructed with null expressionHandler");
+        if (exprHandler == null) {
+            throw new InternalError("AssignmentHandler constructed with null exprHandler");
         }
         if (dispatcher == null) {
             throw new InternalError("AssignmentHandler constructed with null dispatcher");
@@ -38,7 +38,7 @@ public class AssignmentHandler {
         
         this.typeSystem = typeSystem;
         this.interpreter = interpreter;
-        this.expressionHandler = expressionHandler;
+        this.exprHandler = exprHandler;
         this.dispatcher = dispatcher;
     }
     
@@ -188,7 +188,7 @@ private Object assignToSlot(String slotTarget, Object value, ExecutionContext ct
             
             if (arrayObj instanceof NaturalArray) {
                 NaturalArray natural = (NaturalArray) arrayObj;
-                long index = expressionHandler.toLongIndex(indexObj);
+                long index = exprHandler.toLongIndex(indexObj);
                 ensureNoActiveBorrow(arrayObj, index, ctx);
                 Object previous = natural.peekMaterialized(index);
                 natural.set(index, newValue);
@@ -197,15 +197,10 @@ private Object assignToSlot(String slotTarget, Object value, ExecutionContext ct
             }
             
             if (arrayObj instanceof List) {
-                int intIndex = expressionHandler.toIntIndex(indexObj);
+                int intIndex = exprHandler.toIntIndex(indexObj);
                 ensureNoActiveBorrow(arrayObj, intIndex, ctx);
                 List<Object> list = (List<Object>) arrayObj;
-                Object previous = null;
-                if (intIndex == list.size()) {
-                    list.add(newValue);
-                } else {
-                    previous = list.set(intIndex, newValue);
-                }
+                Object previous = list.set(intIndex, newValue);
                 ctx.trackValueReplacement(previous, newValue);
                 return newValue;
             }
@@ -238,13 +233,13 @@ private Object assignToSlot(String slotTarget, Object value, ExecutionContext ct
             }
             if (current instanceof NaturalArray) {
                 NaturalArray natural = (NaturalArray) current;
-                long idx = expressionHandler.toLongIndex(idxObj);
+                long idx = exprHandler.toLongIndex(idxObj);
                 current = natural.get(idx);
                 continue;
             }
             if (current instanceof List) {
                 List<Object> list = (List<Object>) current;
-                int idx = expressionHandler.toIntIndex(idxObj);
+                int idx = exprHandler.toIntIndex(idxObj);
                 if (idx < 0 || idx >= list.size()) {
                     throw new ProgramError("Index out of bounds: " + idx + " for array of size " + list.size());
                 }
@@ -264,13 +259,13 @@ private Object assignToSlot(String slotTarget, Object value, ExecutionContext ct
         }
         if (current instanceof NaturalArray) {
             NaturalArray natural = (NaturalArray) current;
-            long idx = expressionHandler.toLongIndex(lastIdxObj);
+            long idx = exprHandler.toLongIndex(lastIdxObj);
             natural.set(idx, newValue);
             return newValue;
         }
         if (current instanceof List) {
             List<Object> list = (List<Object>) current;
-            int idx = expressionHandler.toIntIndex(lastIdxObj);
+            int idx = exprHandler.toIntIndex(lastIdxObj);
             list.set(idx, newValue);
             return newValue;
         }
@@ -287,9 +282,9 @@ private Object assignToSlot(String slotTarget, Object value, ExecutionContext ct
         if (array instanceof List) {
             List<Object> list = (List<Object>) array;
             List<Object> result = new ArrayList<Object>();
-            long start = expressionHandler.toLongIndex(RangeObjects.getStart(range));
-            long end = expressionHandler.toLongIndex(RangeObjects.getEnd(range));
-            long step = expressionHandler.calculateStep(range);
+            long start = exprHandler.toLongIndex(RangeObjects.getStart(range));
+            long end = exprHandler.toLongIndex(RangeObjects.getEnd(range));
+            long step = exprHandler.calculateStep(range);
             start = normalizeListIndex(start, list.size());
             end = normalizeListIndex(end, list.size());
             
@@ -416,9 +411,9 @@ public Object assignToVariableScoped(String varName, Object newValue, ExecutionC
     
     // Then check object fields
     if (ctx.objectInstance != null && ctx.objectInstance.type != null) {
-        boolean hasField = interpreter.getConstructorResolver()
-            .hasFieldInHierarchy(ctx.objectInstance.type, varName, ctx);
-        if (hasField) {
+        Object fieldValue = interpreter.getConstructorResolver()
+            .getFieldFromHierarchy(ctx.objectInstance.type, varName, ctx);
+        if (fieldValue != null) {
             if (NamingValidator.isAllCaps(varName)) {
                 throw new ProgramError("Cannot reassign constant field '" + varName + "'");
             }
@@ -462,9 +457,7 @@ public Object assignToVariableScoped(String varName, Object newValue, ExecutionC
         try {
             Object existingField = interpreter.getConstructorResolver()
                 .getFieldFromHierarchy(ctx.objectInstance.type, fieldName, ctx);
-            boolean hasField = existingField != null
-                || interpreter.getConstructorResolver().hasFieldInHierarchy(ctx.objectInstance.type, fieldName, ctx);
-            if (hasField) {
+            if (existingField != null) {
                 if (NamingValidator.isAllCaps(fieldName)) {
                     throw new ProgramError("Cannot reassign constant field '" + fieldName + "'");
                 }
@@ -514,15 +507,17 @@ public Object assignToVariableScoped(String varName, Object newValue, ExecutionC
     }
     
     // === Helper Methods ===
+private void validateAssignmentType(String declaredType, Object value, String name) {
+    int expected = TypeHandler.parseTypeMask(declaredType);
+    int actual = typeSystem.getConcreteMask(value);
     
-    private void validateAssignmentType(String declaredType, Object value, String name) {
-        if (!typeSystem.validateTypeWithNullable(declaredType, value)) {
-            throw new ProgramError(
-                "Type mismatch in assignment for " + name + 
-                ". Expected " + declaredType + 
-                ", got " + typeSystem.getConcreteType(value));
-        }
+    if ((actual & expected) == 0) {
+        throw new ProgramError(
+            "Type mismatch for " + name + 
+            ". Expected " + declaredType + 
+            ", got " + typeSystem.getConcreteType(value));
     }
+}
 
     private boolean isFieldDeclaredInTypeHierarchy(Type type, String fieldName, ExecutionContext ctx) {
         Type current = type;
@@ -586,9 +581,9 @@ public Object assignToVariableScoped(String varName, Object newValue, ExecutionC
     
     private void setListRange(List<Object> list, Object range, Object value) {
         try {
-            long start = expressionHandler.toLongIndex(RangeObjects.getStart(range));
-            long end = expressionHandler.toLongIndex(RangeObjects.getEnd(range));
-            long step = expressionHandler.calculateStep(range);
+            long start = exprHandler.toLongIndex(RangeObjects.getStart(range));
+            long end = exprHandler.toLongIndex(RangeObjects.getEnd(range));
+            long step = exprHandler.calculateStep(range);
             
             if (start < 0) start = list.size() + start;
             if (end < 0) end = list.size() + end;

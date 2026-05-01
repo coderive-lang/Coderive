@@ -19,7 +19,6 @@ public final class Executor {
     private static final Object FALLBACK_SENTINEL = new Object();
 
     private static final class RuntimeState {
-        int fallbackCount;
         final Map<Object, Object> memory = new HashMap<Object, Object>();
         final Map<String, Object> slots = new HashMap<String, Object>();
     }
@@ -552,9 +551,6 @@ public final class Executor {
         String reason,
         RuntimeState state
     ) {
-        if (state != null) {
-            state.fallbackCount++;
-        }
         if (!options.isFallbackEnabled()) {
             throw new ProgramError("CodP-TAC execution failed without fallback: " + reason);
         }

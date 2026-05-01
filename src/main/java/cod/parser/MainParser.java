@@ -24,15 +24,10 @@ public class MainParser extends BaseParser {
     private final Interpreter interpreter;
     
     public enum ProgramType {
-    /** Only direct statements - no methods, no classes, no unit */
-    SCRIPT,
-    
-    /** Unit-based static module with top-level methods/fields and classes */
-    STATIC_MODULE,
-    
-    /** Legacy module mode */
-    MODULE
-}
+        SCRIPT,
+        STATIC_MODULE,
+        MODULE
+    }
 
     public MainParser(List<Token> tokens) {
         this(tokens, null);
@@ -42,14 +37,12 @@ public class MainParser extends BaseParser {
         super(new ParserContext(new ParserState(tokens)));
         this.interpreter = interpreter;
         
-        GlobalRegistry globalRegistry = interpreter != null ? 
-            interpreter.getGlobalRegistry() : null;
+        GlobalRegistry globalRegistry = interpreter != null ? interpreter.getGlobalRegistry() : null;
         
         this.expressionParser = new ExpressionParser(ctx, globalRegistry, null);
         this.statementParser = new StatementParser(ctx, expressionParser);
         this.expressionParser.setStatementParser(this.statementParser);
-        this.declarationParser = new DeclarationParser(ctx, statementParser, 
-            interpreter != null ? interpreter.getImportResolver() : null);
+        this.declarationParser = new DeclarationParser(ctx, statementParser, interpreter != null ? interpreter.getImportResolver() : null);
     }
     
     @Override
@@ -58,180 +51,122 @@ public class MainParser extends BaseParser {
     }
     
     public Program parseProgram() {
-    Program program = ASTFactory.createProgram();
-    
-    // UNIT declaration is optional (required only for static modules)
-    if (is(UNIT)) {
-        program.unit = parseUnit();
-    } else {
-        program.unit = ASTFactory.createUnit(DEFAULT_UNIT_NAME, (Token) null);
-    }
-
-    // Parse USE statements (imports)
-    while (is(USE)) {
-        if (program.unit.imports == null) {
-            program.unit.imports = parseUseNode();
+        Program program = ASTFactory.createProgram();
+        
+        if (is(UNIT)) {
+            program.unit = parseUnit();
         } else {
-            Use additionalImports = parseUseNode();
-            program.unit.imports.imports.addAll(additionalImports.imports);
+            program.unit = ASTFactory.createUnit(DEFAULT_UNIT_NAME, (Token) null);
         }
-    }
 
-    // Parse everything else at top level
-    List<Type> typesInFile = new ArrayList<>();
-    List<Policy> policiesInFile = new ArrayList<>();
-    List<Stmt> topLevelStatements = new ArrayList<>();
-    List<Method> topLevelMethods = new ArrayList<>();
-    List<Field> topLevelFields = new ArrayList<>();
-    
-    while (!is(EOF)) {
-        Token currentToken = now();
-        
-        // DIRECT CHECK: If we see "local" or "share" text, try to parse as method first
-        if (currentToken != null && 
-            ("local".equals(currentToken.getText())
-                || "share".equals(currentToken.getText())
-                || "unsafe".equals(currentToken.getText()))) {
-            ParserState savedState = getCurrentState();
-            try {
-                Method method = declarationParser.parseMethod();
-                topLevelMethods.add(method);
-                continue;
-            } catch (ParseError e) {
-                // Not a valid method, restore state and continue
-                setState(savedState);
-            }
-        }
-        
-        // Check for method declarations
-        if (isTopLevelMethodDeclaration()) {
-            Method method = declarationParser.parseMethod();
-            topLevelMethods.add(method);
-            continue;
-        }
-        
-        if (isTopLevelFieldDeclaration()) {
-            Field field = declarationParser.parseField();
-            topLevelFields.add(field);
-            continue;
-        }
-        
-        if (declarationParser.isPolicyDeclaration()) {
-            Policy policy = declarationParser.parsePolicy();
-            program.unit.policies.add(policy);
-            policiesInFile.add(policy);
-            continue;
-        }
-        
-        if (isClassStart() || isClassStartWithoutModifier()) {
-            ParserState beforeType = getCurrentState();
-            
-            Type type = declarationParser.parseType();
-            if (type != null) {
-                program.unit.types.add(type);
-                typesInFile.add(type);
-                continue;
+        while (is(USE)) {
+            if (program.unit.imports == null) {
+                program.unit.imports = parseUseNode();
             } else {
-                setState(beforeType);
-                Method method = declarationParser.parseMethod();
-                topLevelMethods.add(method);
-                continue;
+                Use additionalImports = parseUseNode();
+                program.unit.imports.imports.addAll(additionalImports.imports);
             }
         }
-        
-        // Must be a statement at top level
-        Stmt stmt = statementParser.parseStmt();
-        topLevelStatements.add(stmt);
-    }
-    
-    // Now validate the program structure and set final type
-    program.programType = ModuleValidator.determineProgramType(
-        program,
-        topLevelStatements,
-        topLevelMethods,
-        typesInFile,
-        policiesInFile,
-        now()
-    );
-    
-    // Add top-level elements to the appropriate places based on program type
-    if (program.programType == ProgramType.STATIC_MODULE) {
-        Type staticModuleType = findOrCreateImplicitType(program.unit, "__StaticModule__");
-        staticModuleType.methods.addAll(topLevelMethods);
-        staticModuleType.fields.addAll(topLevelFields);
-    } else if (program.programType == ProgramType.SCRIPT) {
-        Type scriptType = findOrCreateImplicitType(program.unit, "__Script__");
-        scriptType.statements.addAll(topLevelStatements);
-    } else if (program.programType == ProgramType.MODULE) {
-        if (!topLevelFields.isEmpty()) {
-            Type staticModuleType = findOrCreateImplicitType(program.unit, "__StaticModule__");
-            staticModuleType.fields.addAll(topLevelFields);
-        }
-    }
-    
-    // Validate module-specific rules if this is a module
-    if (program.programType == ProgramType.STATIC_MODULE || program.programType == ProgramType.MODULE) {
-        ModuleValidator.validateModule(
-            program,
-            typesInFile,
-            policiesInFile,
-            interpreter,
-            declarationParser,
-            now()
-        );
-    }
-    
-    return program;
-}
 
-    private boolean isTopLevelMethodDeclaration() {
-        return next(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                ParserState savedState = getCurrentState();
-                try {
-                    if (is(SHARE, LOCAL, UNSAFE)) {
-                        consume();
-                    }
-                    while (is(BUILTIN, POLICY, UNSAFE)) {
-                        consume();
-                    }
-                    
-                    Token nameToken = now();
-                    if (!is(nameToken, ID) && !canBeMethod(nameToken)) {
-                        return false;
-                    }
-                    consume();
-                    
-                    if (!is(LPAREN)) {
-                        return false;
-                    }
-                    consume();
-                    
-                    int parenDepth = 1;
-                    while (!is(EOF) && parenDepth > 0) {
-                        if (is(LPAREN)) parenDepth++;
-                        else if (is(RPAREN)) parenDepth--;
-                        consume();
-                    }
-                    
-                    if (is(DOUBLE_COLON)) {
-                        return true;
-                    }
-                    
-                    return is(TILDE_ARROW, LBRACE);
-                } finally {
-                    setState(savedState);
+        List<Type> typesInFile = new ArrayList<Type>();
+        List<Policy> policiesInFile = new ArrayList<Policy>();
+        List<Stmt> topLevelStatements = new ArrayList<Stmt>();
+        List<Method> topLevelMethods = new ArrayList<Method>();
+        List<Field> topLevelFields = new ArrayList<Field>();
+        
+        while (!is(EOF)) {
+            if (isTopLevelMethodDeclaration()) {
+                topLevelMethods.add(declarationParser.parseMethod());
+                continue;
+            }
+            
+            if (isTopLevelFieldDeclaration()) {
+                topLevelFields.add(declarationParser.parseField());
+                continue;
+            }
+            
+            if (declarationParser.isPolicyDeclaration()) {
+                Policy policy = declarationParser.parsePolicy();
+                program.unit.policies.add(policy);
+                policiesInFile.add(policy);
+                continue;
+            }
+            
+            if (isClassStart() || isClassStartWithoutModifier()) {
+                Type type = declarationParser.parseType();
+                if (type != null) {
+                    program.unit.types.add(type);
+                    typesInFile.add(type);
+                    continue;
                 }
             }
-        });
+            
+            // LL(k) Fallback: if it's not a valid top level declaration, it must be a script statement
+            topLevelStatements.add(statementParser.parseStmt());
+        }
+        
+        program.programType = ModuleValidator.determineProgramType(
+            program, topLevelStatements, topLevelMethods, typesInFile, policiesInFile, now()
+        );
+        
+        if (program.programType == ProgramType.STATIC_MODULE) {
+            Type staticModuleType = findOrCreateImplicitType(program.unit, "__StaticModule__");
+            staticModuleType.methods.addAll(topLevelMethods);
+            staticModuleType.fields.addAll(topLevelFields);
+        } else if (program.programType == ProgramType.SCRIPT) {
+            Type scriptType = findOrCreateImplicitType(program.unit, "__Script__");
+            scriptType.statements.addAll(topLevelStatements);
+            
+            if (topLevelStatements != null && !topLevelStatements.isEmpty()) {
+                Method syntheticMain = ASTFactory.createMethod("main", Keyword.SHARE, null, null);
+                syntheticMain.body = new ArrayList<Stmt>();
+                syntheticMain.body.addAll(topLevelStatements);
+                scriptType.methods.add(syntheticMain);
+            }
+        }
+        
+        if (program.programType == ProgramType.STATIC_MODULE || program.programType == ProgramType.MODULE) {
+            ModuleValidator.validateModule(program, typesInFile, policiesInFile, interpreter, declarationParser, now());
+        }
+        
+        return program;
+    }
+
+    private boolean isTopLevelMethodDeclaration() {
+        if (match(BUILTIN)) return true;
+        if (match(MODIFIERS, BUILTIN)) return true;
+        if (match(MODIFIERS, MODIFIERS, BUILTIN)) return true;
+
+        // Check if we have Name + (
+        int offset = 0;
+        if (is(next(offset), SHARE, LOCAL, UNSAFE)) offset++;
+        if (!(is(next(offset), ID) || canBeMethod(next(offset)))) return false;
+        if (!is(next(offset + 1), LPAREN)) return false;
+
+        // Disambiguate Script Method Call vs Declaration: Scan past the parentheses
+        int scan = offset + 2;
+        int depth = 1;
+        while (depth > 0 && scan < tokens.size()) {
+            Token t = next(scan++);
+            if (t == null || t.type == EOF) break;
+            if (is(t, LPAREN)) depth++;
+            else if (is(t, RPAREN)) depth--;
+        }
+
+        // LL(k) Decision: If it's a declaration, it MUST have a contract or body marker
+        Token afterParen = next(scan);
+        return is(afterParen, DOUBLE_COLON, TILDE_ARROW, LBRACE);
+    }
+
+    private boolean isTopLevelFieldDeclaration() {
+        if (match(ID, COLON)) return true;
+        if (match(VISIBILITY, ID, COLON)) return true;
+        return false;
     }
 
     private Type findOrCreateImplicitType(Unit unit, String typeName) {
         for (Type type : unit.types) {
-            if (type.name.equals(typeName)) {
-                return type;
-            }
+            if (type.name.equals(typeName)) return type;
         }
         Type implicitType = ASTFactory.createType(typeName, SHARE, null, null);
         unit.types.add(implicitType);
@@ -239,34 +174,21 @@ public class MainParser extends BaseParser {
     }
 
     private Unit parseUnit() {
-        Token unitToken = now();
-        expect(UNIT);
+        Token unitToken = expect(UNIT);
         String unitName = parseQualifiedName();
         
         String mainClassName = null;
-        if (is(LPAREN)) {
-            ParserState beforeMainCheck = getCurrentState();
-            
-            expect(LPAREN);
-            
-            Token mainToken = now();
-            Token colonToken = next();
-            
-            if (nil(mainToken, colonToken) || 
-                mainToken.type != ID || !mainToken.getText().equals("main") || 
-                colonToken.symbol != COLON) {
-                setState(beforeMainCheck);
-            } else {
-                consume();
-                expect(COLON);
-                
+        if (match(LPAREN, ID, COLON)) {
+            consume(); // LPAREN
+            if ("main".equals(now().getText())) {
+                consume(); // ID(main)
+                consume(); // COLON
                 Token mainTargetToken = now();
                 if (is(mainTargetToken, THIS) || (is(mainTargetToken, ID) && SELF_BROADCAST_NAME.equals(mainTargetToken.getText()))) {
                     mainClassName = consume().getText();
                 } else {
                     mainClassName = parseQualifiedName();
                 }
-                
                 expect(RPAREN);
             }
         }
@@ -277,8 +199,7 @@ public class MainParser extends BaseParser {
     }
 
     private Use parseUseNode() {
-        Token useToken = now();
-        expect(USE);
+        Token useToken = expect(USE);
         expect(LBRACE);
         List<String> imports = new ArrayList<String>();
         if (!is(RBRACE)) {
@@ -301,9 +222,8 @@ public class MainParser extends BaseParser {
                 break;
             }
             Token token = consume();
-            if (token == null || token.type == EOF) {
-                break;
-            }
+            if (token == null || token.type == EOF) break;
+            
             if (token.symbol == LPAREN) parenDepth++;
             else if (token.symbol == RPAREN && parenDepth > 0) parenDepth--;
             else if (token.symbol == LBRACKET) bracketDepth++;
@@ -314,76 +234,17 @@ public class MainParser extends BaseParser {
         
         String value = spec.toString();
         if (value.isEmpty()) {
-            throw error("Expected import spec inside use block (e.g. unit.Class, unit.method(*), unit.*, unit.**, unit.FIELD).");
+            throw error("Expected import spec inside use block");
         }
         return value;
     }
 
-    private boolean isTopLevelFieldDeclaration() {
-        return next(new ParserAction<Boolean>() {
-            @Override
-            public Boolean parse() throws ParseError {
-                ParserState savedState = getCurrentState();
-                try {
-                    if (is(SHARE, LOCAL)) {
-                        consume();
-                    }
-                    
-                    if (!is(ID)) {
-                        return false;
-                    }
-                    consume();
-                    
-                    if (!is(COLON)) {
-                        return false;
-                    }
-                    
-                    return !is(next(), COLON);
-                } finally {
-                    setState(savedState);
-                }
-            }
-        });
-    }
-
-    private boolean isMethodDeclarationStart() {
-        ParserState savedState = getCurrentState();
-        try {
-            Token first = now();
-            if (first == null) return false;
-            
-            int offset = 0;
-            Token token = next(offset);
-
-            if (is(token, LOCAL, SHARE, UNSAFE, BUILTIN, POLICY)) {
-                offset++;
-                token = next(offset);
-            }
-            while (is(token, BUILTIN, POLICY, UNSAFE)) {
-                offset++;
-                token = next(offset);
-            }
-            if (is(token, ID) || canBeMethod(token)) {
-                Token afterName = next(offset + 1);
-                return is(afterName, LPAREN);
-            }
-            return false;
-        } finally {
-            setState(savedState);
-        }
-    }
-
     public Stmt parseSingleLine() {
-        if (is(EOF)) {
-            return null;
-        }
-
+        if (is(EOF)) return null;
         Stmt stmt = statementParser.parseStmt();
-
         if (!is(EOF)) {
             Token current = now();
-            throw error("Unexpected token after statement: " +
-                getTypeName(current.type) + " ('" + current.getText() + "')", current);
+            throw error("Unexpected token after statement: " + getTypeName(current.type) + " ('" + current.getText() + "')", current);
         }
         return stmt;
     }

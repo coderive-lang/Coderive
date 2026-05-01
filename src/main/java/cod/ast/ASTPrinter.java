@@ -183,8 +183,8 @@ public class ASTPrinter extends ASTVisitor<Void> {
     }
     
     @Override
-    public Void visit(VoidReturn node) {
-        println("FIN");
+    public Void visit(Exit node) {
+        println("EXIT");
         return null;
     }
     

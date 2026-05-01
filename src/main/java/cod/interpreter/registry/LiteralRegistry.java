@@ -62,14 +62,12 @@ public class LiteralRegistry {
                         return handleRangeSize((Range) literal, ctx);
                     } else if (literal instanceof NaturalArray) {
                         return handleArraySize((NaturalArray) literal);
-                    } else if (literal instanceof List) {
-                        return Integer.valueOf(((List<?>) literal).size());
                     }
                     // Should never reach here due to type registration
                     throw new ProgramError("Unsupported type for .size");
                 }
             },
-            Range.class, NaturalArray.class, List.class
+            Range.class, NaturalArray.class
         );
 
         define("length",
@@ -539,12 +537,6 @@ public class LiteralRegistry {
         requireArgCount("trim", arguments, 0);
         String target = requireStringTarget(literal, "trim");
         return target.trim();
-    }
-
-    private Object handleStringIsEmpty(Object literal, List<Object> arguments) {
-        requireArgCount("isEmpty", arguments, 0);
-        String target = requireStringTarget(literal, "isEmpty");
-        return target.isEmpty();
     }
 
     @SuppressWarnings("unchecked")

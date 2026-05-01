@@ -1,7 +1,6 @@
 package cod.interpreter.handler;
 
 import cod.ast.node.*;
-import cod.debug.DebugSystem;
 import cod.error.InternalError;
 import cod.error.ProgramError;
 import cod.math.AutoStackingNumber;
@@ -30,119 +29,114 @@ public class ExpressionHandler {
     // === Core Expression Evaluation ===
     
     public Object handleBinaryOp(BinaryOp node, ExecutionContext ctx) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, "expression.handleBinaryOp");
+        if (node == null) {
+            throw new InternalError("handleBinaryOp called with null node");
+        }
+        if (ctx == null) {
+            throw new InternalError("handleBinaryOp called with null context");
+        }
+        
         try {
-            if (node == null) {
-                throw new InternalError("handleBinaryOp called with null node");
-            }
-            if (ctx == null) {
-                throw new InternalError("handleBinaryOp called with null context");
-            }
-            
-            try {
-                Object left = dispatcher.dispatch(node.left);
-                Object right = dispatcher.dispatch(node.right);
-                Object result = null;
+            Object left = dispatcher.dispatch(node.left);
+            Object right = dispatcher.dispatch(node.right);
+            Object result = null;
 
-                switch (node.op) {
-                    case "+":
-                    case "+=":
-                        if (typeSystem.unwrap(left) instanceof TypeHandler.PointerValue
-                            || typeSystem.unwrap(right) instanceof TypeHandler.PointerValue) {
-                            return handlePointerArithmetic(left, right, true, ctx);
-                        }
-                        if (left instanceof String || right instanceof String ||
-                            left instanceof TextLiteral || right instanceof TextLiteral) {
-                            
-                            // === FIX: Force materialization before string conversion ===
-                            Object unwrappedLeft = typeSystem.unwrap(left);
-                            Object unwrappedRight = typeSystem.unwrap(right);
-                            
-                            if (unwrappedLeft instanceof NaturalArray) {
-                                NaturalArray arr = (NaturalArray) unwrappedLeft;
-                                if (arr.hasPendingUpdates()) {
-                                    arr.commitUpdates();
-                                }
-                            }
-                            
-                            if (unwrappedRight instanceof NaturalArray) {
-                                NaturalArray arr = (NaturalArray) unwrappedRight;
-                                if (arr.hasPendingUpdates()) {
-                                    arr.commitUpdates();
-                                }
-                            }
-                            
-                            result = String.valueOf(unwrappedLeft) + String.valueOf(unwrappedRight);
-                        } else {
-                            result = typeSystem.addNumbers(left, right);
-                        }
-                        break;
-
-                    case "*":
-                    case "*=":
-                        result = typeSystem.multiplyNumbers(left, right);
-                        break;
-
-                    case "-":
-                    case "-=":
-                        if (typeSystem.unwrap(left) instanceof TypeHandler.PointerValue
-                            || typeSystem.unwrap(right) instanceof TypeHandler.PointerValue) {
-                            return handlePointerArithmetic(left, right, false, ctx);
-                        }
-                        result = typeSystem.subtractNumbers(left, right);
-                        break;
-
-                    case "/":
-                    case "/=":
-                        result = typeSystem.divideNumbers(left, right);
-                        break;
-
-                    case "%":
-                        result = typeSystem.modulusNumbers(left, right);
-                        break;
-
-                    case ">":
-                        result = typeSystem.compare(left, right) > 0;
-                        break;
-
-                    case "<":
-                        result = typeSystem.compare(left, right) < 0;
-                        break;
-
-                    case ">=":
-                        result = typeSystem.compare(left, right) >= 0;
-                        break;
-
-                    case "<=":
-                        result = typeSystem.compare(left, right) <= 0;
-                        break;
-
-                    case "=":
-                        result = right;
-                        break;
-
-                    case "==":
-                        result = typeSystem.areEqual(left, right);
-                        break;
-
-                    case "!=":
-                        result = !typeSystem.areEqual(left, right);
-                        break;
+            switch (node.op) {
+                case "+":
+                case "+=":
+                    if (typeSystem.unwrap(left) instanceof TypeHandler.PointerValue
+                        || typeSystem.unwrap(right) instanceof TypeHandler.PointerValue) {
+                        return handlePointerArithmetic(left, right, true, ctx);
+                    }
+                    if (left instanceof String || right instanceof String ||
+                        left instanceof TextLiteral || right instanceof TextLiteral) {
                         
-                    case "is":
-                        return handleIsOperator(left, right);
+                        Object unwrappedLeft = typeSystem.unwrap(left);
+                        Object unwrappedRight = typeSystem.unwrap(right);
+                        
+                        if (unwrappedLeft instanceof NaturalArray) {
+                            NaturalArray arr = (NaturalArray) unwrappedLeft;
+                            if (arr.hasPendingUpdates()) {
+                                arr.commitUpdates();
+                            }
+                        }
+                        
+                        if (unwrappedRight instanceof NaturalArray) {
+                            NaturalArray arr = (NaturalArray) unwrappedRight;
+                            if (arr.hasPendingUpdates()) {
+                                arr.commitUpdates();
+                            }
+                        }
+                        
+                        result = String.valueOf(unwrappedLeft) + String.valueOf(unwrappedRight);
+                    } else {
+                        result = typeSystem.addNumbers(left, right);
+                    }
+                    break;
 
-                    default:
-                        throw new ProgramError("Unknown operator: " + node.op);
+                case "*":
+                case "*=":
+                    result = typeSystem.multiplyNumbers(left, right);
+                    break;
+
+                case "-":
+                case "-=":
+                    if (typeSystem.unwrap(left) instanceof TypeHandler.PointerValue
+                        || typeSystem.unwrap(right) instanceof TypeHandler.PointerValue) {
+                        return handlePointerArithmetic(left, right, false, ctx);
+                    }
+                    result = typeSystem.subtractNumbers(left, right);
+                    break;
+
+                case "/":
+                case "/=":
+                    result = typeSystem.divideNumbers(left, right);
+                    break;
+
+                case "%":
+                    result = typeSystem.modulusNumbers(left, right);
+                    break;
+
+                case ">":
+                    result = typeSystem.compare(left, right) > 0;
+                    break;
+
+                case "<":
+                    result = typeSystem.compare(left, right) < 0;
+                    break;
+
+                case ">=":
+                    result = typeSystem.compare(left, right) >= 0;
+                    break;
+
+                case "<=":
+                    result = typeSystem.compare(left, right) <= 0;
+                    break;
+
+                case "=":
+                    result = right;
+                    break;
+
+                case "==":
+                    result = typeSystem.areEqual(left, right);
+                    break;
+
+                case "!=":
+                    result = !typeSystem.areEqual(left, right);
+                    break;
+                    
+                case "is": {
+                    return handleIsOperator(left, right);
                 }
-                return result;
-            } catch (ProgramError e) {
-                throw e;
-            } catch (Exception e) {
-                throw new InternalError("Binary operation failed: " + node.op, e);
+
+                default:
+                    throw new ProgramError("Unknown operator: " + node.op);
             }
-        } finally {
-            stopPerfTimer(timer);
+            return result;
+        } catch (ProgramError e) {
+            throw e;
+        } catch (Exception e) {
+            throw new InternalError("Binary operation failed: " + node.op, e);
         }
     }
     
@@ -205,7 +199,8 @@ public class ExpressionHandler {
             if (idx < 0 || idx >= arr.size()) {
                 throw new ProgramError("Pointer address index out of bounds: " + idx);
             }
-            return new TypeHandler.PointerValue(arr, idx, arr.getElementType());
+            int pointedMask = typeSystem.getConcreteMask(arr.get(idx));
+            return new TypeHandler.PointerValue(arr, idx, pointedMask);
         }
 
         if (container instanceof List) {
@@ -214,12 +209,9 @@ public class ExpressionHandler {
             if (idx < 0 || idx >= list.size()) {
                 throw new ProgramError("Pointer address index out of bounds: " + idx);
             }
-            String pointedType = "any";
             Object pointedValue = list.get((int) idx);
-            if (pointedValue != null) {
-                pointedType = typeSystem.getConcreteType(typeSystem.unwrap(pointedValue));
-            }
-            return new TypeHandler.PointerValue(list, idx, pointedType);
+            int pointedMask = typeSystem.getConcreteMask(pointedValue);
+            return new TypeHandler.PointerValue(list, idx, pointedMask);
         }
 
         throw new ProgramError("Address-of operator '&' only supports array/list index targets");
@@ -236,7 +228,7 @@ public class ExpressionHandler {
         }
         if (pointer.container instanceof List) {
             List<?> list = (List<?>) pointer.container;
-            int idx = Math.toIntExact(pointer.index);
+            int idx = (int) pointer.index;
             if (idx < 0 || idx >= list.size()) {
                 throw new ProgramError("Pointer dereference out of bounds: " + idx);
             }
@@ -275,7 +267,7 @@ public class ExpressionHandler {
                 throw new ProgramError("Pointer arithmetic out of bounds: " + nextIndex);
             }
         }
-        return new TypeHandler.PointerValue(pointer.container, nextIndex, pointer.pointedType);
+        return new TypeHandler.PointerValue(pointer.container, nextIndex, pointer.pointedMask);
     }
     
     public Object handleTypeCast(TypeCast node, ExecutionContext ctx) {
@@ -330,64 +322,63 @@ public class ExpressionHandler {
         }
     }
     
-public Object handleChainedComparison(ChainedComparison node, ExecutionContext ctx) {
-    if (node == null) {
-        throw new InternalError("handleChainedComparison called with null node");
-    }
-    if (ctx == null) {
-        throw new InternalError("handleChainedComparison called with null context");
-    }
-    
-    try {
-        // Evaluate all expressions first
-        List<Object> values = new ArrayList<Object>();
-        for (Expr expr : node.expressions) {
-            Object value = dispatcher.dispatch(expr);
-            values.add(typeSystem.unwrap(value));
+    public Object handleChainedComparison(ChainedComparison node, ExecutionContext ctx) {
+        if (node == null) {
+            throw new InternalError("handleChainedComparison called with null node");
+        }
+        if (ctx == null) {
+            throw new InternalError("handleChainedComparison called with null context");
         }
         
-        for (int i = 0; i < node.operators.size(); i++) {
-            String op = node.operators.get(i);
-            Object left = values.get(i);
-            Object right = values.get(i + 1);
-            
-            boolean comparisonResult;
-            
-            switch (op) {
-                case "==":
-                    comparisonResult = typeSystem.areEqual(left, right);
-                    break;
-                case "!=":
-                    comparisonResult = !typeSystem.areEqual(left, right);
-                    break;
-                case ">":
-                    comparisonResult = typeSystem.compare(left, right) > 0;
-                    break;
-                case "<":
-                    comparisonResult = typeSystem.compare(left, right) < 0;
-                    break;
-                case ">=":
-                    comparisonResult = typeSystem.compare(left, right) >= 0;
-                    break;
-                case "<=":
-                    comparisonResult = typeSystem.compare(left, right) <= 0;
-                    break;
-                default:
-                    throw new ProgramError("Unknown comparison operator in chain: " + op);
+        try {
+            List<Object> values = new ArrayList<Object>();
+            for (Expr expr : node.expressions) {
+                Object value = dispatcher.dispatch(expr);
+                values.add(typeSystem.unwrap(value));
             }
             
-            if (!comparisonResult) {
-                return false;
+            for (int i = 0; i < node.operators.size(); i++) {
+                String op = node.operators.get(i);
+                Object left = values.get(i);
+                Object right = values.get(i + 1);
+                
+                boolean comparisonResult;
+                
+                switch (op) {
+                    case "==":
+                        comparisonResult = typeSystem.areEqual(left, right);
+                        break;
+                    case "!=":
+                        comparisonResult = !typeSystem.areEqual(left, right);
+                        break;
+                    case ">":
+                        comparisonResult = typeSystem.compare(left, right) > 0;
+                        break;
+                    case "<":
+                        comparisonResult = typeSystem.compare(left, right) < 0;
+                        break;
+                    case ">=":
+                        comparisonResult = typeSystem.compare(left, right) >= 0;
+                        break;
+                    case "<=":
+                        comparisonResult = typeSystem.compare(left, right) <= 0;
+                        break;
+                    default:
+                        throw new ProgramError("Unknown comparison operator in chain: " + op);
+                }
+                
+                if (!comparisonResult) {
+                    return false;
+                }
             }
+            
+            return true;
+        } catch (ProgramError e) {
+            throw e;
+        } catch (Exception e) {
+            throw new InternalError("Chained comparison evaluation failed", e);
         }
-        
-        return true;
-    } catch (ProgramError e) {
-        throw e;
-    } catch (Exception e) {
-        throw new InternalError("Chained comparison evaluation failed", e);
     }
-}
     
     public Object handleEqualityChain(EqualityChain node, ExecutionContext ctx) {
         if (node == null) {
@@ -447,6 +438,63 @@ public Object handleChainedComparison(ChainedComparison node, ExecutionContext c
         } catch (Exception e) {
             throw new InternalError("Equality chain evaluation failed", e);
         }
+    }
+    
+    // === FAST IS OPERATOR (BITMASK) ===
+    
+    private Object handleIsOperator(Object leftValue, Object rightValue) {
+        leftValue = typeSystem.unwrap(leftValue);
+        rightValue = typeSystem.unwrap(rightValue);
+        
+        // FAST PATH 1: Right is precomputed integer mask
+        if (rightValue instanceof Integer) {
+            int expected = ((Integer) rightValue).intValue();
+            int actual = typeSystem.getConcreteMask(leftValue);
+            return (actual & expected) != 0;
+        }
+        
+        // FAST PATH 2: Right is TypeHandler.Value (type value)
+        if (rightValue instanceof TypeHandler.Value) {
+            TypeHandler.Value tv = (TypeHandler.Value) rightValue;
+            if (tv.isTypeValue()) {
+                int actual = typeSystem.getConcreteMask(leftValue);
+                return (actual & tv.declaredMask) != 0;
+            }
+        }
+        
+        // FAST PATH 3: Right is type literal string
+        if (rightValue instanceof String) {
+            String typeStr = (String) rightValue;
+            if (typeSystem.isTypeLiteral(typeStr)) {
+                int expected = TypeHandler.parseTypeMask(typeStr);
+                int actual = typeSystem.getConcreteMask(leftValue);
+                return (actual & expected) != 0;
+            }
+            // Check for union/complex types
+            if (typeStr.startsWith("[") || typeStr.startsWith("(") || typeStr.contains("|")) {
+                int expected = TypeHandler.parseTypeMask(typeStr);
+                int actual = typeSystem.getConcreteMask(leftValue);
+                return (actual & expected) != 0;
+            }
+        }
+        
+        // FAST PATH 4: Right is TextLiteral
+        if (rightValue instanceof TextLiteral) {
+            String typeStr = ((TextLiteral) rightValue).value;
+            if (typeSystem.isTypeLiteral(typeStr)) {
+                int expected = TypeHandler.parseTypeMask(typeStr);
+                int actual = typeSystem.getConcreteMask(leftValue);
+                return (actual & expected) != 0;
+            }
+            if (typeStr.startsWith("[") || typeStr.startsWith("(") || typeStr.contains("|")) {
+                int expected = TypeHandler.parseTypeMask(typeStr);
+                int actual = typeSystem.getConcreteMask(leftValue);
+                return (actual & expected) != 0;
+            }
+        }
+        
+        // FALLBACK: Legacy equality
+        return typeSystem.areEqual(leftValue, rightValue);
     }
     
     // === Type/Value Conversion ===
@@ -580,73 +628,6 @@ public Object handleChainedComparison(ChainedComparison node, ExecutionContext c
             throw e;
         } catch (Exception e) {
             throw new InternalError("Step calculation failed", e);
-        }
-    }
-    
-    // === Type Checking ===
-    
-    private Object handleIsOperator(Object leftValue, Object rightValue) {
-        try {
-            leftValue = typeSystem.unwrap(leftValue);
-            rightValue = typeSystem.unwrap(rightValue);
-            
-            if (rightValue instanceof TypeHandler.Value) {
-                TypeHandler.Value typeVal = (TypeHandler.Value) rightValue;
-                if (typeVal.isTypeValue()) {
-                    return typeVal.matches(leftValue);
-                }
-            }
-            
-            if (rightValue instanceof String) {
-                String typeString = (String) rightValue;
-                
-                if (typeSystem.isTypeLiteral(typeString)) {
-                    String leftType = typeSystem.getConcreteType(leftValue);
-                    return typeString.equals(leftType);
-                }
-                
-                if (typeString.startsWith("[") || typeString.startsWith("(") || typeString.contains("|")) {
-                    return typeSystem.validateType(typeString, leftValue);
-                }
-            }
-
-            if (rightValue instanceof TextLiteral) {
-                String typeString = ((TextLiteral) rightValue).value;
-                
-                if (typeSystem.isTypeLiteral(typeString)) {
-                    String leftType = typeSystem.getConcreteType(leftValue);
-                    return typeString.equals(leftType);
-                }
-                
-                if (typeString.startsWith("[") || typeString.startsWith("(") || typeString.contains("|")) {
-                    return typeSystem.validateType(typeString, leftValue);
-                }
-            }
-            
-            return typeSystem.areEqual(leftValue, rightValue);
-        } catch (ProgramError e) {
-            throw e;
-        } catch (Exception e) {
-            throw new InternalError("'is' operator evaluation failed", e);
-        }
-    }
-
-    private static boolean isTimerEnabled(DebugSystem.Level level) {
-        DebugSystem.Level current = DebugSystem.getLevel();
-        return current != DebugSystem.Level.OFF && current.getLevel() >= level.getLevel();
-    }
-
-    private static String startPerfTimer(DebugSystem.Level level, String operation) {
-        if (!isTimerEnabled(level)) {
-            return null;
-        }
-        DebugSystem.startTimer(level, operation);
-        return operation;
-    }
-
-    private static void stopPerfTimer(String timerName) {
-        if (timerName != null) {
-            DebugSystem.stopTimer(timerName);
         }
     }
 }

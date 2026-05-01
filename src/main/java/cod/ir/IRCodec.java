@@ -326,17 +326,6 @@ final class IRCodec {
         }
     }
 
-    private static void writeNodeFields(DataOutput out, String nodeName, int depth, String[] fieldNames, Object[] values)
-            throws IOException {
-        if (fieldNames.length != values.length) {
-            throw new IOException("IR node field name/value mismatch for " + nodeName);
-        }
-        writeNodeStart(out, nodeName, fieldNames.length);
-        for (int i = 0; i < fieldNames.length; i++) {
-            writeNodeField(out, fieldNames[i], values[i], depth);
-        }
-    }
-
     static void writeNodeStart(DataOutput out, String nodeName, int fieldCount) throws IOException {
         ensureCollectionSize(fieldCount, "fields");
         writeString(out, nodeClassName(nodeName));

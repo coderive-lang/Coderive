@@ -38,69 +38,181 @@ public class IRManager {
     private static final Map<String, Object> CONTAINER_LOCKS = new ConcurrentHashMap<String, Object>();
 
     private final String projectRoot;
-    private final IRWriter writer;
+    // private final IRWriter writer; <- currently unused
     private final IRReader reader;
-    private final Map<String, Map<String, Type>> cache;
+    
+    // ========== MEMORY CACHE (Java 7 compatible) ==========
+    private final Map<String, Map<String, Type>> typeCache;
     private final Map<String, Map<String, Artifact>> artifactCache;
+    private final Map<String, String> indexCache;
+    
     private final Compiler compiler;
 
     public IRManager(String projectRoot) {
         this.projectRoot = projectRoot;
-        this.writer = new IRWriter();
+        // this.writer = new IRWriter();
         this.reader = new IRReader();
-        this.cache = new HashMap<String, Map<String, Type>>();
+        this.typeCache = new HashMap<String, Map<String, Type>>();
         this.artifactCache = new HashMap<String, Map<String, Artifact>>();
+        this.indexCache = new HashMap<String, String>();
         this.compiler = new Compiler();
     }
 
+    // ========== MEMORY CACHE METHODS ==========
+    
+    private Type getTypeFromCache(String unit, String className) {
+        synchronized (typeCache) {
+            Map<String, Type> unitCache = typeCache.get(unit);
+            if (unitCache != null) {
+                return unitCache.get(className);
+            }
+        }
+        return null;
+    }
+    
+    private void putTypeInCache(String unit, String className, Type type) {
+        synchronized (typeCache) {
+            Map<String, Type> unitCache = typeCache.get(unit);
+            if (unitCache == null) {
+                unitCache = new HashMap<String, Type>();
+                typeCache.put(unit, unitCache);
+            }
+            unitCache.put(className, type);
+        }
+    }
+    
+    private Artifact getArtifactFromCache(String unit, String className) {
+        synchronized (artifactCache) {
+            Map<String, Artifact> unitCache = artifactCache.get(unit);
+            if (unitCache != null) {
+                return unitCache.get(className);
+            }
+        }
+        return null;
+    }
+    
+    private void putArtifactInCache(String unit, String className, Artifact artifact) {
+        synchronized (artifactCache) {
+            Map<String, Artifact> unitCache = artifactCache.get(unit);
+            if (unitCache == null) {
+                unitCache = new HashMap<String, Artifact>();
+                artifactCache.put(unit, unitCache);
+            }
+            unitCache.put(className, artifact);
+        }
+    }
+    
+    private String getIndexFromCache(String unit) {
+        synchronized (indexCache) {
+            return indexCache.get(unit);
+        }
+    }
+    
+    private void putIndexInCache(String unit, String content) {
+        synchronized (indexCache) {
+            indexCache.put(unit, content);
+        }
+    }
+    
+    public void clearCache() {
+        synchronized (typeCache) {
+            typeCache.clear();
+        }
+        synchronized (artifactCache) {
+            artifactCache.clear();
+        }
+        synchronized (indexCache) {
+            indexCache.clear();
+        }
+    }
+    
+    public boolean isTypeCached(String unit, String className) {
+        return getTypeFromCache(unit, className) != null;
+    }
+    
+    public boolean isArtifactCached(String unit, String className) {
+        return getArtifactFromCache(unit, className) != null;
+    }
+    
+    /**
+     * Preload all artifacts from container into memory cache at startup
+     */
+    public void preloadUnit(String unit) {
+        if (unit == null || unit.isEmpty()) return;
+        
+        synchronized (artifactCache) {
+            Map<String, Artifact> existing = artifactCache.get(unit);
+            if (existing != null && !existing.isEmpty()) {
+                return;
+            }
+        }
+        
+        File container = getContainerFile(unit);
+        if (!container.exists() || !container.isFile()) {
+            return;
+        }
+        
+        Map<String, byte[]> entries;
+        try {
+            entries = readContainerEntries(container);
+        } catch (IOException e) {
+            return;
+        }
+        
+        for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+            String entryName = entry.getKey();
+            if (entryName.endsWith(IR_EXT) && !PROJECT_INDEX_FILE_NAME.equals(entryName)) {
+                String className = entryName;
+                int lastSlash = className.lastIndexOf('/');
+                if (lastSlash >= 0) {
+                    className = className.substring(lastSlash + 1);
+                }
+                if (className.endsWith(IR_EXT)) {
+                    className = className.substring(0, className.length() - IR_EXT.length());
+                }
+                
+                try {
+                    Artifact artifact = readArtifactFromBytes(entry.getValue());
+                    if (artifact != null) {
+                        putArtifactInCache(unit, className, artifact);
+                        if (artifact.typeSnapshot != null) {
+                            putTypeInCache(unit, className, artifact.typeSnapshot);
+                        }
+                    }
+                } catch (IOException e) {
+                    // Skip corrupted entry
+                }
+            }
+        }
+    }
+
+    // ========== LOAD/SAVE METHODS ==========
+    
     public Type load(String unit, String className) {
         if (unit == null || className == null) {
             return null;
         }
 
-        Map<String, Type> unitCache = cache.get(unit);
-        if (unitCache != null) {
-            Type cached = unitCache.get(className);
-            if (cached != null) {
-                return cached;
-            }
+        Type cached = getTypeFromCache(unit, className);
+        if (cached != null) {
+            return cached;
         }
 
-        try {
-            Artifact artifact = readArtifactFromContainer(unit, className);
-            if (artifact == null) {
-                // Standalone .codb files are a permanent supported format.
-                // .codc containers are additive grouping, not a replacement.
-                File file = getIRFile(unit, className);
-                if (!file.exists()) {
-                    return null;
-                }
-                artifact = reader.readArtifact(file);
-            }
-            if (artifact != null) {
-                putArtifactCache(unit, className, artifact);
-                Type type = artifact.typeSnapshot;
-                if (type != null) {
-                    putCache(unit, className, type);
-                }
-                return type;
-            }
-            return null;
-        } catch (IOException e) {
-            return null;
+        Artifact artifact = loadArtifact(unit, className);
+        if (artifact != null && artifact.typeSnapshot != null) {
+            return artifact.typeSnapshot;
         }
+        return null;
     }
 
     public void save(String unit, Type type) {
         if (type == null || unit == null || type.name == null) {
             return;
         }
-        try {
-            Artifact artifact = compiler.compile(unit, type);
-            writeArtifactToContainer(unit, artifact.className, artifact);
-            putCache(unit, type.name, type);
-            putArtifactCache(unit, type.name, artifact);
-        } catch (IOException ignored) {}
+        Artifact artifact = compiler.compile(unit, type);
+        putArtifactInCache(unit, type.name, artifact);
+        putTypeInCache(unit, type.name, type);
+        writeArtifactToContainerAsync(unit, artifact.className, artifact);
     }
 
     public Artifact loadArtifact(String unit, String className) {
@@ -108,32 +220,36 @@ public class IRManager {
             return null;
         }
 
-        Map<String, Artifact> unitCache = artifactCache.get(unit);
-        if (unitCache != null && unitCache.containsKey(className)) {
-            return unitCache.get(className);
+        Artifact cached = getArtifactFromCache(unit, className);
+        if (cached != null) {
+            return cached;
         }
 
+        Artifact artifact = null;
         try {
-            Artifact artifact = readArtifactFromContainer(unit, className);
-            if (artifact == null) {
-                // Standalone .codb files are a permanent supported format.
-                // .codc containers are additive grouping, not a replacement.
-                File file = getIRFile(unit, className);
-                if (!file.exists()) {
-                    return null;
-                }
-                artifact = reader.readArtifact(file);
-            }
-            if (artifact != null) {
-                putArtifactCache(unit, className, artifact);
-                if (artifact.typeSnapshot != null) {
-                    putCache(unit, className, artifact.typeSnapshot);
-                }
-            }
-            return artifact;
+            artifact = readArtifactFromContainer(unit, className);
         } catch (IOException e) {
-            return null;
+            // Fall through to file read
         }
+        
+        if (artifact == null) {
+            File file = getIRFile(unit, className);
+            if (file.exists()) {
+                try {
+                    artifact = reader.readArtifact(file);
+                } catch (IOException e) {
+                    // Failed to read
+                }
+            }
+        }
+        
+        if (artifact != null) {
+            putArtifactInCache(unit, className, artifact);
+            if (artifact.typeSnapshot != null) {
+                putTypeInCache(unit, className, artifact.typeSnapshot);
+            }
+        }
+        return artifact;
     }
 
     public Unit loadCodPTACUnit(String unit, String className) {
@@ -143,70 +259,108 @@ public class IRManager {
 
     public void saveArtifact(String unit, Artifact artifact) {
         if (artifact == null || unit == null || artifact.className == null) return;
-        try {
-            writeArtifactToContainer(unit, artifact.className, artifact);
-            putArtifactCache(unit, artifact.className, artifact);
-            if (artifact.typeSnapshot != null) {
-                putCache(unit, artifact.className, artifact.typeSnapshot);
-            }
-        } catch (IOException ignored) {}
+        putArtifactInCache(unit, artifact.className, artifact);
+        if (artifact.typeSnapshot != null) {
+            putTypeInCache(unit, artifact.className, artifact.typeSnapshot);
+        }
+        writeArtifactToContainerAsync(unit, artifact.className, artifact);
     }
 
-    public void clearCache() {
-        cache.clear();
-        artifactCache.clear();
-    }
-
+    // ========== INDEX METHODS ==========
+    
     public String loadIndex(String unit) {
         if (unit == null || unit.isEmpty()) return null;
+        
+        String cached = getIndexFromCache(unit);
+        if (cached != null) {
+            return cached;
+        }
+        
         String entryName = getProjectIndexEntryName();
+        byte[] data = null;
         try {
-            byte[] data = readContainerEntry(unit, entryName);
-            if (data == null) return null;
-            return new String(data, StandardCharsets.UTF_8);
+            data = readContainerEntry(unit, entryName);
         } catch (IOException e) {
             return null;
         }
+        if (data == null) return null;
+        
+        String content = new String(data, StandardCharsets.UTF_8);
+        putIndexInCache(unit, content);
+        return content;
     }
 
-    public void saveIndex(String unit, String indexContent) throws IOException {
+    public void saveIndex(final String unit, String indexContent) {
         if (unit == null || unit.isEmpty() || indexContent == null) return;
-        String entryName = getProjectIndexEntryName();
-        writeContainerEntry(unit, entryName, indexContent.getBytes(StandardCharsets.UTF_8));
+        
+        putIndexInCache(unit, indexContent);
+        
+        final String entryName = getProjectIndexEntryName();
+        final byte[] data = indexContent.getBytes(StandardCharsets.UTF_8);
+        Thread writerThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    writeContainerEntry(unit, entryName, data);
+                } catch (IOException e) {
+                    // Silent fail - cache is still valid
+                }
+            }
+        });
+        writerThread.setDaemon(true);
+        writerThread.start();
     }
 
     public Map<String, Object> getCacheStats() {
         Map<String, Object> stats = new HashMap<String, Object>();
-        int total = 0;
-        for (Map<String, Type> unitCache : cache.values()) {
-            total += unitCache.size();
+        
+        int typeTotal = 0;
+        synchronized (typeCache) {
+            for (Map<String, Type> unitCache : typeCache.values()) {
+                typeTotal += unitCache.size();
+            }
+            stats.put("typeCacheUnits", typeCache.size());
+            stats.put("typeCacheClasses", Integer.valueOf(typeTotal));
         }
-        stats.put("units", cache.size());
-        stats.put("classes", total);
-        int artifacts = 0;
-        for (Map<String, Artifact> unitArtifacts : artifactCache.values()) {
-            artifacts += unitArtifacts.size();
+        
+        int artifactTotal = 0;
+        synchronized (artifactCache) {
+            for (Map<String, Artifact> unitCache : artifactCache.values()) {
+                artifactTotal += unitCache.size();
+            }
+            stats.put("artifactCacheUnits", artifactCache.size());
+            stats.put("artifactCacheClasses", Integer.valueOf(artifactTotal));
         }
-        stats.put("artifacts", artifacts);
+        
+        synchronized (indexCache) {
+            stats.put("indexCacheUnits", Integer.valueOf(indexCache.size()));
+        }
+        
         return stats;
     }
 
-    private void putCache(String unit, String className, Type type) {
-        Map<String, Type> unitCache = cache.get(unit);
-        if (unitCache == null) {
-            unitCache = new HashMap<String, Type>();
-            cache.put(unit, unitCache);
-        }
-        unitCache.put(className, type);
+    // ========== ASYNC DISK WRITE ==========
+    
+    private void writeArtifactToContainerAsync(final String unit, final String className, final Artifact artifact) {
+        Thread writerThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    writeArtifactToContainer(unit, className, artifact);
+                } catch (IOException e) {
+                    // Silent fail - cache is still valid
+                }
+            }
+        });
+        writerThread.setDaemon(true);
+        writerThread.start();
     }
 
-    private void putArtifactCache(String unit, String className, Artifact artifact) {
-        Map<String, Artifact> unitCache = artifactCache.get(unit);
-        if (unitCache == null) {
-            unitCache = new HashMap<String, Artifact>();
-            artifactCache.put(unit, unitCache);
-        }
-        unitCache.put(className, artifact);
+    // ========== PRIVATE HELPER METHODS ==========
+    
+    private void writeArtifactToContainer(String unit, String className, Artifact artifact) throws IOException {
+        if (unit == null || className == null || artifact == null) return;
+        writeContainerEntry(unit, getContainerEntryName(unit, className), writeArtifactToBytes(artifact));
     }
 
     private File getIRFile(String unit, String className) {
@@ -236,11 +390,6 @@ public class IRManager {
         byte[] data = readContainerEntry(unit, getContainerEntryName(unit, className));
         if (data == null) return null;
         return readArtifactFromBytes(data);
-    }
-
-    private void writeArtifactToContainer(String unit, String className, Artifact artifact) throws IOException {
-        if (unit == null || className == null || artifact == null) return;
-        writeContainerEntry(unit, getContainerEntryName(unit, className), writeArtifactToBytes(artifact));
     }
 
     private byte[] readContainerEntry(String unit, String entryName) throws IOException {
@@ -294,7 +443,6 @@ public class IRManager {
                     CRC32 crc = new CRC32();
                     crc.update(value);
                     ZipEntry zipEntry = new ZipEntry(e.getKey());
-                    // .codc is intentionally an uncompressed zip container (level 0, STORED entries).
                     zipEntry.setMethod(ZipEntry.STORED);
                     zipEntry.setSize(value.length);
                     zipEntry.setCompressedSize(value.length);
@@ -331,7 +479,7 @@ public class IRManager {
     }
 
     private Map<String, byte[]> readContainerEntries(File container) throws IOException {
-        Map<String, byte[]> entries = new LinkedHashMap<>();
+        Map<String, byte[]> entries = new LinkedHashMap<String, byte[]>();
         if (container == null || !container.exists() || !container.isFile()) {
             return entries;
         }

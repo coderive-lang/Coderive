@@ -43,7 +43,7 @@ public class SourceSpan {
             startToken != null ? startToken.line : 1,
             startToken != null ? startToken.column : 1,
             endToken != null ? endToken.line : 1,
-            endToken != null ? endToken.column + (endToken.getLength() - 1) : 1,
+            endToken != null ? endToken.column + (endToken.length - 1) : 1,
             startToken,
             endToken
         );
