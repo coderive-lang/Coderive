@@ -6,6 +6,7 @@ share unsafe BorrowBox {
     share unsafe trigger() {
         buffer[0] = 1
         p: *u8 = &buffer[0]
+        buffer[0] = 2
         out(*p)
     }
 }

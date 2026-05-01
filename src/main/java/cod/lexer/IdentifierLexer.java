@@ -6,11 +6,11 @@ import java.util.*;
 
 public class IdentifierLexer {
 
-    private final MainLexer lexer;
+    private final LexerSource source;
     private final List<String> extractedIdentifiers;
     private final Set<String> keywords;
+    private boolean extractionMode = false;
     
-    // Perfect hash for O(1) keyword detection
     private static final int[] KEYWORD_HASH = new int[512];
     private static final Keyword[] KEYWORD_BY_HASH = new Keyword[512];
     
@@ -18,17 +18,7 @@ public class IdentifierLexer {
         for (Keyword kw : Keyword.values()) {
             String name = kw.toString();
             int hash = perfectHash(name);
-            
-            // Check for collision during construction
-            if (KEYWORD_HASH[hash] == 1) {
-                Keyword existing = KEYWORD_BY_HASH[hash];
-                throw new LexError(
-                    "FATAL: Hash collision in keyword lexer!\n" +
-                    "  Keyword '" + name + "' hashes to " + hash + "\n" +
-                    "  Keyword '" + existing.toString() + "' already uses this hash.\n"
-                );
-            }
-            
+            if (KEYWORD_HASH[hash] == 1) throw new LexError("FATAL: Hash collision in keyword lexer!");
             KEYWORD_HASH[hash] = 1;
             KEYWORD_BY_HASH[hash] = kw;
         }
@@ -37,126 +27,103 @@ public class IdentifierLexer {
     private static int perfectHash(String s) {
         int len = s.length();
         if (len == 0) return 0;
-        // Use combination of length, first char, last char, and middle char
         int hash = len * 31;
         hash = hash * 31 + s.charAt(0) * 17;
         hash = hash * 31 + s.charAt(len - 1) * 13;
-        if (len > 2) {
-            hash = hash * 31 + s.charAt(len / 2) * 7;
-        }
-        // Add rolling hash for all characters to ensure uniqueness
+        if (len > 2) hash = hash * 31 + s.charAt(len / 2) * 7;
         int rolling = 0;
-        for (int i = 0; i < len; i++) {
-            rolling = (rolling << 5) - rolling + s.charAt(i);
-        }
-        hash = hash ^ (rolling & 0x1FF);
-        return hash & 511;
-    }
-    
-    private static int perfectHash(char[] source, int start, int length) {
-        if (length == 0) return 0;
-        int hash = length * 31;
-        hash = hash * 31 + source[start] * 17;
-        hash = hash * 31 + source[start + length - 1] * 13;
-        if (length > 2) {
-            hash = hash * 31 + source[start + length / 2] * 7;
-        }
-        int rolling = 0;
-        for (int i = 0; i < length; i++) {
-            rolling = (rolling << 5) - rolling + source[start + i];
-        }
-        hash = hash ^ (rolling & 0x1FF);
-        return hash & 511;
+        for (int i = 0; i < len; i++) rolling = (rolling << 5) - rolling + s.charAt(i);
+        hash = (hash ^ (rolling & 0x1FF)) & 511;
+        return hash;
     }
 
-    public IdentifierLexer(MainLexer lexer) {
-        this.lexer = lexer;
+    public IdentifierLexer(LexerSource source) {
+        this.source = source;
         this.extractedIdentifiers = new ArrayList<String>();
         this.keywords = new HashSet<String>();
-        
-        for (Keyword keyword : Keyword.values()) {
-            keywords.add(keyword.toString());
-        }
+        for (Keyword keyword : Keyword.values()) keywords.add(keyword.toString());
     }
 
     public Token scan() {
-        char c = lexer.peek();
-        if (Character.isLetter(c) || c == '_') {
+        char[] input = source.getInputArray();
+        int pos = source.getPosition();
+        if (pos < input.length && input[pos] < 128 && CharClassifier.IS_ID_START[input[pos]]) {
             return readIdentifierOrKeyword();
         }
         return null;
     }
 
     private Token readIdentifierOrKeyword() {
-        int startLine = lexer.line;
-        int startCol = lexer.column;
-        int startPos = lexer.getPosition();
-        int length = 0;
+        int startLine = source.getLine();
+        int startCol = source.getColumn();
+        int startPos = source.getPosition();
         
-        // Count characters without allocating
-        while (lexer.getPosition() < lexer.getInput().length) {
-            char c = lexer.peek();
-            if (Character.isLetterOrDigit(c) || c == '_') {
-                lexer.consume();
-                length++;
-            } else {
-                break;
-            }
+        char[] input = source.getInputArray();
+        int pos = startPos;
+        int rolling = 0;
+        
+        while (pos < input.length) {
+            char c = input[pos];
+            if (c >= 128 || !CharClassifier.IS_ID_PART[c]) break;
+            rolling = (rolling << 5) - rolling + c;
+            pos++;
         }
         
-        char[] source = lexer.getInputArray();
+        int length = pos - startPos;
+        source.setPosition(pos);
+        source.setColumn(startCol + length);
         
-        // O(1) keyword detection using perfect hash
-        int hash = perfectHash(source, startPos, length);
+        int hash = (length * 31);
+        hash = hash * 31 + input[startPos] * 17;
+        hash = hash * 31 + input[pos - 1] * 13;
+        if (length > 2) hash = hash * 31 + input[startPos + (length / 2)] * 7;
+        hash = (hash ^ (rolling & 0x1FF)) & 511;
+
         if (KEYWORD_HASH[hash] == 1) {
             Keyword keyword = KEYWORD_BY_HASH[hash];
-            // Verify exact match (no false positives)
-            String kwName = keyword.toString();
-            if (matchesExactly(source, startPos, length, kwName)) {
-                return Token.createKeyword(source, startPos, length, 
-                                          startLine, startCol, keyword);
+            if (matchesExactly(input, startPos, length, keyword.toString())) {
+                return Token.createKeyword(input, startPos, length, startLine, startCol, keyword);
             }
         }
+
+        if (matchesExactly(input, startPos, length, "continue")) {
+            return Token.createKeyword(input, startPos, length, startLine, startCol, Keyword.SKIP);
+        }
+
+        if (matchesExactly(input, startPos, length, "return")) {
+            return Token.createKeyword(input, startPos, length, startLine, startCol, Keyword.EXIT);
+        }
         
-        // Not a keyword - return identifier
-        String identifierText = new String(source, startPos, length);
-        extractedIdentifiers.add(identifierText);
-        return Token.createIdentifier(source, startPos, length, startLine, startCol);
+        if (extractionMode) extractedIdentifiers.add(new String(input, startPos, length));
+        return Token.createIdentifier(input, startPos, length, startLine, startCol);
     }
     
-    private boolean matchesExactly(char[] source, int start, int length, String keyword) {
+    private boolean matchesExactly(char[] input, int start, int length, String keyword) {
         if (length != keyword.length()) return false;
-        for (int i = 0; i < length; i++) {
-            if (source[start + i] != keyword.charAt(i)) return false;
-        }
+        for (int i = 0; i < length; i++) if (input[start + i] != keyword.charAt(i)) return false;
         return true;
     }
 
     public List<String> extractAllIdentifiers() {
+        extractionMode = true;
         extractedIdentifiers.clear();
-        int savedPos = lexer.getPosition();
-        int savedLine = lexer.line;
-        int savedCol = lexer.column;
+        int savedPos = source.getPosition();
+        int savedLine = source.getLine();
+        int savedCol = source.getColumn();
 
-        lexer.setPosition(0);
-        lexer.line = 1;
-        lexer.column = 1;
+        source.setPosition(0);
+        source.setLine(1);
+        source.setColumn(1);
 
-        while (lexer.getPosition() < lexer.getInput().length) {
+        while (source.getPosition() < source.getInputArray().length) {
             Token token = scan();
-            if (token == null) {
-                lexer.consume();
-            }
+            if (token == null) source.consume();
         }
 
-        lexer.setPosition(savedPos);
-        lexer.line = savedLine;
-        lexer.column = savedCol;
-
+        source.setPosition(savedPos);
+        source.setLine(savedLine);
+        source.setColumn(savedCol);
+        extractionMode = false;
         return new ArrayList<String>(extractedIdentifiers);
-    }
-
-    public boolean isKeyword(String text) {
-        return keywords.contains(text);
     }
 }

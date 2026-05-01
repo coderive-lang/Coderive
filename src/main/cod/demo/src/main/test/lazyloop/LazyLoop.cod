@@ -103,9 +103,6 @@ b := arrB[100] == 300
 c := arrA[600] == 600
 d := arrB[600] == 1200
 
-
-// Error tho. Interpolation doesnt handle this yet.
-// Verify:
 out("arrA[100] == 200 is {a}")  // Should be true
 out("arrB[100] == 300 is {b}")  // Should be true
 out("arrA[600] == 600 is {c}")  // Should be true

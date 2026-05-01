@@ -1,7 +1,6 @@
 package cod.range;
 
 import cod.ast.node.*;
-import cod.debug.DebugSystem;
 import cod.error.InternalError;
 import cod.error.ProgramError;
 import cod.interpreter.Evaluator;
@@ -15,7 +14,6 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class NaturalArray {
-    private static final String PERF_PREFIX = "naturalArray.";
 
     private final Range baseRange;
     private final Evaluator evaluator;
@@ -26,6 +24,12 @@ public class NaturalArray {
     // Element type and type handler
     private final String elementType;
     private final TypeHandler typeHandler;
+
+    // ========== OPTIMIZATION: PRIMITIVE UNBOXING ==========
+    private long[] unboxedIntCache;
+    private double[] unboxedFloatCache;
+    private static final int MAX_UNBOXED_SIZE = 10000000; // ~80MB max limit
+    private static final long INT_SENTINEL = Long.MIN_VALUE;
 
     // Conversion support for [text] = [int range]
     private boolean convertToString = false;
@@ -61,11 +65,16 @@ public class NaturalArray {
     private static final long[] POWERS_2 = new long[11];
     private static final long[] TOTAL_UP_TO_LENGTH = new long[11];
 
-    // Formula collections
+    // Formula collections - using array-specific formulas
     private List<SequenceFormula> sequenceFormulas = new ArrayList<SequenceFormula>();
     private List<ConditionalFormula> conditionalFormulas = new ArrayList<ConditionalFormula>();
-    private List<LinearRecurrenceFormula> linearRecurrenceFormulas = new ArrayList<LinearRecurrenceFormula>();
-    private List<VectorRecurrenceBinding> vectorRecurrenceFormulas = new ArrayList<VectorRecurrenceBinding>();
+    
+    // For array recurrences - now using AccumulationFormula (FREC type)
+    private List<AccumulationFormula> linearRecurrenceFormulas = new ArrayList<AccumulationFormula>();
+    
+    // For vector recurrences - now using AccumulationFormula (VEC type)
+    private List<AccumulationFormula> vectorRecurrenceFormulas = new ArrayList<AccumulationFormula>();
+    
     private Map<Long, Object> computedCache = new HashMap<Long, Object>();
     
     // Pending updates for lazy assignment
@@ -110,7 +119,7 @@ public class NaturalArray {
         public final long end;
         public final long step;
         public final boolean valid;
-        public final String error;  // For debugging
+        public final String error;
         
         public ProcessedRange(Object range) {
             long s = 0, e = 0, st = 0;
@@ -164,7 +173,6 @@ public class NaturalArray {
             this.error = err;
         }
         
-        // Helper methods using pre-processed values
         public boolean contains(long index) {
             if (!valid) return false;
             
@@ -204,7 +212,7 @@ public class NaturalArray {
             if (step > 0) {
                 return end + step == other.start;
             }
-            return end + step == other.start; // For negative step, end < start
+            return end + step == other.start;
         }
         
         public ProcessedRange merge(ProcessedRange other) {
@@ -224,7 +232,7 @@ public class NaturalArray {
         final long order;
         
         PendingRangeUpdate(Object spec, Object value, long order) {
-            this.range = new ProcessedRange(spec);  // Process ONCE
+            this.range = new ProcessedRange(spec);
             this.value = value;
             this.order = order;
         }
@@ -247,16 +255,6 @@ public class NaturalArray {
         }
     }
 
-    private static class VectorRecurrenceBinding {
-        final VectorRecurrenceFormula formula;
-        final int sequenceIndex;
-
-        VectorRecurrenceBinding(VectorRecurrenceFormula formula, int sequenceIndex) {
-            this.formula = formula;
-            this.sequenceIndex = sequenceIndex;
-        }
-    }
-
     // ========== CONSTRUCTORS ==========
 
     public NaturalArray(Range range, Evaluator evaluator, ExecutionContext context) {
@@ -274,31 +272,26 @@ public class NaturalArray {
         this.evaluator = evaluator;
         this.context = context;
         
-        // Get type handler and element type from context
         this.typeHandler = context.getTypeHandler();
         if (this.typeHandler == null) {
             throw new InternalError("NaturalArray constructed with context that has null typeHandler");
         }
         
-        // ========== ARRAY TRACKING INITIALIZATION ==========
         this.arrayId = nextArrayId.getAndIncrement();
         this.tracked = false;
         
-        // Determine element type from range
         this.elementType = determineElementType();
         
         this.cache = null;
         this.isMutable = false;
         this.maxIndex = TOTAL_UP_TO_LENGTH[10] - 1;
 
-        // Initialize recent cache
         clearRecentCache();
 
         Object rawStart = evaluator.evaluate(baseRange.start, context);
         Object rawEnd = evaluator.evaluate(baseRange.end, context);
 
         if (rawStart instanceof String && rawEnd instanceof String) {
-            // LEXICOGRAPHICAL RANGE
             this.isLexicographicalRange = true;
             this.startString = (String) rawStart;
             this.endString = (String) rawEnd;
@@ -345,11 +338,9 @@ public class NaturalArray {
         } else {
             this.isLexicographicalRange = false;
             
-            // Convert to AutoStackingNumber
             this.cachedStart = typeHandler.toAutoStackingNumber(rawStart);
             this.cachedEnd = typeHandler.toAutoStackingNumber(rawEnd);
             
-            // Validate that start/end match element type
             validateRangeBound(cachedStart, "start");
             validateRangeBound(cachedEnd, "end");
             
@@ -359,26 +350,21 @@ public class NaturalArray {
             }
         }
         
-        // ========== REGISTER WITH TRACKER IF IN A LOOP ==========
         if (ArrayTracker.getCurrentLoopId() != 0) {
             ArrayTracker.registerArray(this);
             this.tracked = true;
         }
     }
 
-    // Constructor with target type for conversion
     public NaturalArray(Range range, Evaluator evaluator, ExecutionContext context, String targetType) {
         this(range, evaluator, context);
-        // arrayId already set by main constructor
         
-        // If target type is [text] but actual type is not text, mark for conversion
         if (targetType != null && targetType.startsWith("[") && targetType.endsWith("]")) {
             String expectedElementType = targetType.substring(1, targetType.length() - 1);
             if (expectedElementType.equals("text") && !this.elementType.equals("text")) {
                 this.convertToString = true;
                 this.targetElementType = expectedElementType;
                 
-                // Force size recalculation with correct element type
                 this.cachedSize = null;
                 this.cachedStart = null;
                 this.cachedEnd = null;
@@ -389,23 +375,14 @@ public class NaturalArray {
     
     // ========== ARRAY TRACKING METHODS ==========
     
-    /**
-     * Get the unique integer ID of this array
-     */
     public int getArrayId() {
         return arrayId;
     }
     
-    /**
-     * Check if this array is being tracked
-     */
     public boolean isTracked() {
         return tracked;
     }
     
-    /**
-     * Enable tracking for this array
-     */
     public void enableTracking() {
         if (!tracked) {
             tracked = true;
@@ -415,14 +392,10 @@ public class NaturalArray {
         }
     }
     
-    /**
-     * Disable tracking for this array
-     */
     public void disableTracking() {
         tracked = false;
     }
     
-    // Determine element type from range
     private String determineElementType() {
         Object start = evaluator.evaluate(baseRange.start, context);
         Object end = evaluator.evaluate(baseRange.end, context);
@@ -434,17 +407,14 @@ public class NaturalArray {
             return startType;
         }
         
-        // Mixed numeric types become float
         if ((startType.equals("int") || startType.equals("float")) &&
             (endType.equals("int") || endType.equals("float"))) {
             return "float";
         }
         
-        // Default to text for mixed types
         return "text";
     }
     
-    // Validate range bound matches element type
     private void validateRangeBound(AutoStackingNumber bound, String boundName) {
         if (!typeHandler.validateType(elementType, bound)) {
             throw new ProgramError(
@@ -455,16 +425,10 @@ public class NaturalArray {
 
     // ========== CACHE SIZE METHODS ==========
     
-    /**
-     * Invalidates the cached size when array changes
-     */
     private void invalidateSize() {
         cachedSize = null;
     }
     
-    /**
-     * Calculates the actual size (called when cache is invalid)
-     */
     private long calculateSizeInternal() {
         try {
             if (isLexicographicalRange) {
@@ -485,7 +449,6 @@ public class NaturalArray {
                 return 0L;
             }
 
-            // Calculate: ((end - start) / step) + 1
             AutoStackingNumber diff = endVal.subtract(startVal);
             AutoStackingNumber steps = diff.divide(stepVal);
             AutoStackingNumber sizeNum = steps.add(AutoStackingNumber.one(1));
@@ -516,16 +479,13 @@ public class NaturalArray {
     private void updateRecentCache(long index, Object value) {
         if (!recentCacheValid || index < recentCacheStart || 
             index >= recentCacheStart + RECENT_CACHE_SIZE) {
-            // Shift cache window to center around this index
             recentCacheStart = Math.max(0, index - RECENT_CACHE_SIZE / 2);
             recentCacheValid = true;
-            // Clear the cache - will be filled on subsequent gets
             for (int i = 0; i < RECENT_CACHE_SIZE; i++) {
                 recentCache[i] = null;
             }
         }
         
-        // Store in cache if within range
         if (index >= recentCacheStart && index < recentCacheStart + RECENT_CACHE_SIZE) {
             int cacheIndex = (int)(index - recentCacheStart);
             recentCache[cacheIndex] = value;
@@ -563,19 +523,16 @@ public class NaturalArray {
             
             this.parentRef = new WeakReference<NaturalArray>(NaturalArray.this);
             
-            // Process range ONCE
             ProcessedRange rawRange = new ProcessedRange(spec);
             
             long arraySize = NaturalArray.this.size();
             
-            // Adjust negative indices
             long adjStart = rawRange.start;
             long adjEnd = rawRange.end;
             
             if (adjStart < 0) adjStart = arraySize + adjStart;
             if (adjEnd < 0) adjEnd = arraySize + adjEnd;
             
-            // Validate bounds
             if (adjStart < 0 || adjStart >= arraySize) {
                 throw new ProgramError("Start index out of bounds: " + adjStart);
             }
@@ -583,7 +540,6 @@ public class NaturalArray {
                 throw new ProgramError("End index out of bounds: " + adjEnd);
             }
             
-            // Create adjusted range if needed
             if (adjStart != rawRange.start || adjEnd != rawRange.end) {
                 this.range = new ProcessedRange(adjStart, adjEnd, rawRange.step);
             } else {
@@ -650,7 +606,7 @@ public class NaturalArray {
         private final List<LazyRangeView> rangeViews;
         private final int totalSize;
         private final int[] rangeOffsets;
-        private final int[] rangeForIndex; // Precomputed mapping
+        private final int[] rangeForIndex;
 
         public LazyMultiRangeView(Object multiRange) {
             if (multiRange == null) {
@@ -672,7 +628,6 @@ public class NaturalArray {
             
             this.totalSize = total;
             
-            // Precompute offsets and mapping for O(1) lookup
             this.rangeOffsets = new int[rangeViews.size()];
             this.rangeForIndex = new int[total];
             
@@ -698,7 +653,6 @@ public class NaturalArray {
                 throw new ProgramError("Cannot access multi-range view - original array was garbage collected");
             }
             
-            // O(1) direct lookup instead of binary search
             int rangeIdx = rangeForIndex[index];
             int offset = index - rangeOffsets[rangeIdx];
             return rangeViews.get(rangeIdx).get(offset);
@@ -771,120 +725,118 @@ public class NaturalArray {
     // ========== CORE ARRAY OPERATIONS ==========
 
     public long size() {
-        String timer = startPerfTimer(DebugSystem.Level.DEBUG, PERF_PREFIX + "size");
-        try {
-            if (cachedSize == null) {
-                cachedSize = calculateSizeInternal();
-            }
-            return cachedSize;
-        } finally {
-            stopPerfTimer(timer);
+        if (cachedSize == null) {
+            cachedSize = calculateSizeInternal();
         }
+        return cachedSize;
     }
 
     public Object get(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.DEBUG, PERF_PREFIX + "get");
-        try {
-            if (index < 0) {
-                long size = size();
-                index = size + index;
-            }
-
-            checkBounds(index);
-            
-            // ========== TRACKING ==========
-            if (tracked) {
-                ArrayTracker.recordArrayAccess(this);
-            }
-            
-            // Check recent cache first (fastest)
-            Object recent = getFromRecentCache(index);
-            if (recent != null) {
-                if (tracked) ArrayTracker.recordCacheHit(this);
-                lastIndex = index;
-                lastValue = recent;
-                return maybeConvert(recent);
-            }
-            
-            if (tracked) ArrayTracker.recordCacheMiss(this);
-            
-            // Apply any pending updates that affect this index
-            applyPendingUpdatesForIndex(index);
-
-            if (lastIndex != null && lastIndex == index) {
-                Object val = maybeConvert(lastValue);
-                updateRecentCache(index, val);
-                return val;
-            }
-
-            if (isMutable && cache != null && cache.containsKey(index)) {
-                Object val = cache.get(index);
-                lastIndex = index;
-                lastValue = val;
-                updateRecentCache(index, val);
-                return maybeConvert(val);
-            }
-
-            if (computedCache != null && computedCache.containsKey(index)) {
-                Object cached = computedCache.get(index);
-                lastIndex = index;
-                lastValue = cached;
-                updateRecentCache(index, cached);
-                return maybeConvert(cached);
-            }
-
-            // Try sequence formulas first (most specific)
-            Object sequenceResult = evaluateSequenceFormulas(index);
-            if (sequenceResult != null) {
-                if (computedCache == null) computedCache = new HashMap<Long, Object>();
-                computedCache.put(index, sequenceResult);
-                lastIndex = index;
-                lastValue = sequenceResult;
-                updateRecentCache(index, sequenceResult);
-                return maybeConvert(sequenceResult);
-            }
-
-            // Then conditional formulas
-            Object conditionalResult = evaluateConditionalFormulas(index);
-            if (conditionalResult != null) {
-                if (computedCache == null) computedCache = new HashMap<Long, Object>();
-                computedCache.put(index, conditionalResult);
-                lastIndex = index;
-                lastValue = conditionalResult;
-                updateRecentCache(index, conditionalResult);
-                return maybeConvert(conditionalResult);
-            }
-            
-            // Then linear recurrence formulas
-            Object vectorRecurrenceResult = evaluateVectorRecurrenceFormulas(index);
-            if (vectorRecurrenceResult != null) {
-                lastIndex = index;
-                lastValue = vectorRecurrenceResult;
-                updateRecentCache(index, vectorRecurrenceResult);
-                return maybeConvert(vectorRecurrenceResult);
-            }
-
-            // Then scalar linear recurrence formulas
-            Object recurrenceResult = evaluateLinearRecurrenceFormulas(index);
-            if (recurrenceResult != null) {
-                lastIndex = index;
-                lastValue = recurrenceResult;
-                updateRecentCache(index, recurrenceResult);
-                return maybeConvert(recurrenceResult);
-            }
-
-            // Finally, base calculation
-            Object result = calculateValue(index);
-            lastIndex = index;
-            lastValue = result;
-            updateRecentCache(index, result);
-            return maybeConvert(result);
-        } finally {
-            stopPerfTimer(timer);
+        if (index < 0) {
+            long size = size();
+            index = size + index;
         }
+
+        checkBounds(index);
+        
+        // --- PRIMITIVE FAST PATH START ---
+        if (unboxedIntCache != null && index < unboxedIntCache.length) {
+            long val = unboxedIntCache[(int) index];
+            if (val != INT_SENTINEL) {
+                if (tracked) ArrayTracker.recordArrayAccess(this);
+                return maybeConvert(AutoStackingNumber.fromLong(val));
+            }
+        }
+        if (unboxedFloatCache != null && index < unboxedFloatCache.length) {
+            double val = unboxedFloatCache[(int) index];
+            if (!Double.isNaN(val)) {
+                if (tracked) ArrayTracker.recordArrayAccess(this);
+                return maybeConvert(AutoStackingNumber.fromDouble(val));
+            }
+        }
+        // --- PRIMITIVE FAST PATH END ---
+
+        if (tracked) {
+            ArrayTracker.recordArrayAccess(this);
+        }
+        
+        Object recent = getFromRecentCache(index);
+        if (recent != null) {
+            if (tracked) ArrayTracker.recordCacheHit(this);
+            lastIndex = index;
+            lastValue = recent;
+            return maybeConvert(recent);
+        }
+        
+        if (tracked) ArrayTracker.recordCacheMiss(this);
+        
+        applyPendingUpdatesForIndex(index);
+
+        if (lastIndex != null && lastIndex == index) {
+            Object val = maybeConvert(lastValue);
+            updateRecentCache(index, val);
+            return val;
+        }
+
+        if (isMutable && cache != null && cache.containsKey(index)) {
+            Object val = cache.get(index);
+            lastIndex = index;
+            lastValue = val;
+            updateRecentCache(index, val);
+            return maybeConvert(val);
+        }
+
+        if (computedCache != null && computedCache.containsKey(index)) {
+            Object cached = computedCache.get(index);
+            lastIndex = index;
+            lastValue = cached;
+            updateRecentCache(index, cached);
+            return maybeConvert(cached);
+        }
+
+        Object sequenceResult = evaluateSequenceFormulas(index);
+        if (sequenceResult != null) {
+            if (computedCache == null) computedCache = new HashMap<Long, Object>();
+            computedCache.put(index, sequenceResult);
+            lastIndex = index;
+            lastValue = sequenceResult;
+            updateRecentCache(index, sequenceResult);
+            return maybeConvert(sequenceResult);
+        }
+
+        Object conditionalResult = evaluateConditionalFormulas(index);
+        if (conditionalResult != null) {
+            if (computedCache == null) computedCache = new HashMap<Long, Object>();
+            computedCache.put(index, conditionalResult);
+            lastIndex = index;
+            lastValue = conditionalResult;
+            updateRecentCache(index, conditionalResult);
+            return maybeConvert(conditionalResult);
+        }
+        
+        Object vectorRecurrenceResult = evaluateVectorRecurrenceFormulas(index);
+        if (vectorRecurrenceResult != null) {
+            lastIndex = index;
+            lastValue = vectorRecurrenceResult;
+            updateRecentCache(index, vectorRecurrenceResult);
+            return maybeConvert(vectorRecurrenceResult);
+        }
+
+        Object recurrenceResult = evaluateLinearRecurrenceFormulas(index);
+        if (recurrenceResult != null) {
+            lastIndex = index;
+            lastValue = recurrenceResult;
+            updateRecentCache(index, recurrenceResult);
+            return maybeConvert(recurrenceResult);
+        }
+
+        Object result = calculateValue(index);
+        lastIndex = index;
+        lastValue = result;
+        updateRecentCache(index, result);
+        return maybeConvert(result);
     }
 
-    // Get with explicit conversion control
     public Object get(long index, boolean withConversion) {
         Object value = get(index);
         
@@ -895,10 +847,6 @@ public class NaturalArray {
         return value;
     }
 
-    /**
-     * Returns a previously materialized value for an index without triggering
-     * formula evaluation.
-     */
     public Object peekMaterialized(long index) {
         if (index < 0) {
             long size = size();
@@ -916,7 +864,6 @@ public class NaturalArray {
         return null;
     }
 
-    // Convert value to string based on its type
     private Object convertToString(Object value) {
         if (value == null) return "none";
         if (value instanceof String) return value;
@@ -941,7 +888,6 @@ public class NaturalArray {
         return String.valueOf(value);
     }
 
-    // Apply conversion if needed - with caching
     private Object maybeConvert(Object value) {
         if (convertToString) {
             return convertToString(value);
@@ -961,12 +907,10 @@ public class NaturalArray {
             throw e;
         }
         
-        // ========== TRACKING ==========
         if (tracked) {
             ArrayTracker.recordArrayModification(this);
         }
         
-        // Type check before assignment - use target element type if converting
         String checkType = convertToString ? targetElementType : elementType;
         if (!typeHandler.validateType(checkType, value)) {
             throw new ProgramError(
@@ -976,19 +920,39 @@ public class NaturalArray {
             );
         }
 
+        if (!isMutable) {
+            becomeMutable();
+        }
+
+        // --- PRIMITIVE FAST PATH START ---
+        if (unboxedIntCache != null && index < unboxedIntCache.length) {
+            unboxedIntCache[(int) index] = typeHandler.toAutoStackingNumber(value).longValue();
+            invalidateRecentCache(index);
+            if (computedCache != null) computedCache.remove(index);
+            invalidateSize();
+            lastIndex = null;
+            lastValue = null;
+            return;
+        }
+        if (unboxedFloatCache != null && index < unboxedFloatCache.length) {
+            unboxedFloatCache[(int) index] = typeHandler.toAutoStackingNumber(value).doubleValue();
+            invalidateRecentCache(index);
+            if (computedCache != null) computedCache.remove(index);
+            invalidateSize();
+            lastIndex = null;
+            lastValue = null;
+            return;
+        }
+        // --- PRIMITIVE FAST PATH END ---
+
         lastIndex = null;
         lastValue = null;
 
-        // Invalidate caches
         invalidateRecentCache(index);
         if (computedCache != null) {
             computedCache.remove(index);
         }
-        invalidateSize(); // Size might change if index >= old size
-
-        if (!isMutable) {
-            becomeMutable();
-        }
+        invalidateSize();
 
         if (cache == null) {
             cache = new HashMap<Long, Object>();
@@ -1028,7 +992,6 @@ public class NaturalArray {
             throw new InternalError("setRange called with null range");
         }
         
-        // ========== TRACKING ==========
         if (tracked) {
             ArrayTracker.recordArrayModification(this);
             ProcessedRange processed = new ProcessedRange(range);
@@ -1037,7 +1000,6 @@ public class NaturalArray {
             }
         }
         
-        // Type check for range assignment - use target element type if converting
         String checkType = convertToString ? targetElementType : elementType;
         if (!typeHandler.validateType(checkType, value)) {
             throw new ProgramError(
@@ -1056,9 +1018,8 @@ public class NaturalArray {
             
             lastIndex = null;
             lastValue = null;
-            invalidateSize(); // Size might change
+            invalidateSize();
             
-            // Invalidate cache smarter
             if (computedCache != null && !computedCache.isEmpty()) {
                 ProcessedRange processed = new ProcessedRange(range);
                 if (processed.valid) {
@@ -1067,7 +1028,6 @@ public class NaturalArray {
                         computedCache.clear();
                         clearRecentCache();
                     } else {
-                        // Selective invalidation
                         for (long i = 0; i < rangeSize; i++) {
                             long index = processed.indexAt(i);
                             computedCache.remove(index);
@@ -1089,7 +1049,6 @@ public class NaturalArray {
             throw new InternalError("setMultiRange called with null multiRange");
         }
         
-        // ========== TRACKING ==========
         if (tracked) {
             ArrayTracker.recordArrayModification(this);
             int total = 0;
@@ -1102,7 +1061,6 @@ public class NaturalArray {
             ArrayTracker.recordPendingUpdates(this, total);
         }
         
-        // Type check for multi-range assignment - use target element type if converting
         String checkType = convertToString ? targetElementType : elementType;
         if (!typeHandler.validateType(checkType, value)) {
             throw new ProgramError(
@@ -1126,9 +1084,8 @@ public class NaturalArray {
             
             lastIndex = null;
             lastValue = null;
-            invalidateSize(); // Size might change
+            invalidateSize();
             
-            // Clear computed cache for multi-range (could be optimized further)
             if (computedCache != null) {
                 computedCache.clear();
                 clearRecentCache();
@@ -1142,8 +1099,6 @@ public class NaturalArray {
     }
     
     private void applyPendingUpdatesForIndex(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "applyPendingUpdatesForIndex");
-        try {
         if (!hasPendingUpdates || pendingUpdates.isEmpty()) {
             return;
         }
@@ -1158,9 +1113,6 @@ public class NaturalArray {
         }
         cache.put(index, resolvedUpdate.value);
         invalidateRecentCache(index);
-        } finally {
-            stopPerfTimer(timer);
-        }
     }
 
     private void registerPendingUpdate(PendingRangeUpdate update) {
@@ -1222,8 +1174,6 @@ public class NaturalArray {
     }
 
     private PendingRangeUpdate resolvePendingUpdateForIndex(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "resolvePendingUpdateForIndex");
-        try {
         if (pendingUpdatesByStart == null) {
             for (int i = pendingUpdates.size() - 1; i >= 0; i--) {
                 PendingRangeUpdate update = pendingUpdates.get(i);
@@ -1263,19 +1213,13 @@ public class NaturalArray {
             }
         }
         return winner;
-        } finally {
-            stopPerfTimer(timer);
-        }
     }
     
     public void commitUpdates() {
-        String timer = startPerfTimer(DebugSystem.Level.DEBUG, PERF_PREFIX + "commitUpdates");
-        try {
         if (!hasPendingUpdates || pendingUpdates.isEmpty()) {
             return;
         }
         
-        // Sort by start index for merging (Java 7 compatible)
         Collections.sort(pendingUpdates, new Comparator<PendingRangeUpdate>() {
             @Override
             public int compare(PendingRangeUpdate a, PendingRangeUpdate b) {
@@ -1285,7 +1229,6 @@ public class NaturalArray {
             }
         });
         
-        // Merge consecutive ranges with same value and step
         List<PendingRangeUpdate> merged = new ArrayList<PendingRangeUpdate>();
         PendingRangeUpdate current = null;
         
@@ -1295,7 +1238,6 @@ public class NaturalArray {
             if (current == null) {
                 current = update;
             } else if (canMerge(current, update)) {
-                // Extend current range
                 ProcessedRange mergedRange = current.range.merge(update.range);
                 current = new PendingRangeUpdate(mergedRange, current.value, current.order);
             } else {
@@ -1305,7 +1247,6 @@ public class NaturalArray {
         }
         if (current != null) merged.add(current);
         
-        // Apply merged updates
         for (PendingRangeUpdate update : merged) {
             applyPendingUpdate(update);
         }
@@ -1315,9 +1256,6 @@ public class NaturalArray {
         pendingUpdateOrderPrefixByStart = null;
         pendingUpdateOrderPrefixDirty = false;
         hasPendingUpdates = false;
-        } finally {
-            stopPerfTimer(timer);
-        }
     }
 
     private boolean canMerge(PendingRangeUpdate a, PendingRangeUpdate b) {
@@ -1334,7 +1272,6 @@ public class NaturalArray {
         
         long iterations = range.size();
         
-        // Clear computed cache for affected indices
         if (computedCache != null) {
             for (long i = 0; i < iterations; i++) {
                 long index = range.indexAt(i);
@@ -1343,7 +1280,6 @@ public class NaturalArray {
             }
         }
         
-        // Apply to cache
         if (cache == null) {
             cache = new HashMap<Long, Object>();
         }
@@ -1353,7 +1289,7 @@ public class NaturalArray {
             cache.put(index, value);
         }
         
-        invalidateSize(); // Size might change
+        invalidateSize();
     }
     
     private static long toLongIndex(Object obj) {
@@ -1400,7 +1336,7 @@ public class NaturalArray {
             boolean isUpper = c >= 'A' && c <= 'Z';
             if (isUpper) {
                 patternMask |= (1L << (n - 1 - i));
-                c += 32; // Convert to lowercase for digit calculation
+                c += 32;
             }
             int digit = c - 'a';
             contentIndex = contentIndex * 26 + digit;
@@ -1434,7 +1370,7 @@ public class NaturalArray {
 
         for (int i = 0; i < n; i++) {
             if (((patternIndex >> (n - 1 - i)) & 1) == 1) {
-                chars[i] = (char) (chars[i] - 32); // Convert to uppercase
+                chars[i] = (char) (chars[i] - 32);
             }
         }
 
@@ -1449,11 +1385,9 @@ public class NaturalArray {
         long absStep = Math.abs(stepLong);
         
         if (isUp) {
-            // Forward range
             if (startIndex > endIndex) return 0;
             return (endIndex - startIndex) / absStep + 1;
         } else {
-            // Reverse range
             if (startIndex < endIndex) return 0;
             return (startIndex - endIndex) / absStep + 1;
         }
@@ -1465,10 +1399,8 @@ public class NaturalArray {
         long effectiveIndex;
         
         if (isUp) {
-            // Forward range: start + (index * step)
             effectiveIndex = startIndex + (index * stepLong);
         } else {
-            // Reverse range: start - (index * Math.abs(stepLong))
             effectiveIndex = startIndex - (index * Math.abs(stepLong));
         }
 
@@ -1483,20 +1415,15 @@ public class NaturalArray {
     }
 
     private Object calculateValue(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "calculateValue");
-        try {
-            if (isLexicographicalRange) {
-                return calculateLexValue(index);
-            }
-
-            AutoStackingNumber startVal = getStart();
-            AutoStackingNumber stepVal = getStep();
-            AutoStackingNumber indexNum = AutoStackingNumber.fromLong(index);
-            
-            return startVal.add(indexNum.multiply(stepVal));
-        } finally {
-            stopPerfTimer(timer);
+        if (isLexicographicalRange) {
+            return calculateLexValue(index);
         }
+
+        AutoStackingNumber startVal = getStart();
+        AutoStackingNumber stepVal = getStep();
+        AutoStackingNumber indexNum = AutoStackingNumber.fromLong(index);
+        
+        return startVal.add(indexNum.multiply(stepVal));
     }
 
     // ========== GETTERS WITH LAZY INITIALIZATION ==========
@@ -1556,7 +1483,21 @@ public class NaturalArray {
     }
 
     private void becomeMutable() {
+        if (this.isMutable) return;
         this.isMutable = true;
+        long sz = size();
+        if (sz > 0 && sz <= MAX_UNBOXED_SIZE && !convertToString) {
+            if ("int".equals(elementType) || "i64".equals(elementType)) {
+                unboxedIntCache = new long[(int) sz];
+                Arrays.fill(unboxedIntCache, INT_SENTINEL);
+                return;
+            } else if ("float".equals(elementType) || "f64".equals(elementType)) {
+                unboxedFloatCache = new double[(int) sz];
+                Arrays.fill(unboxedFloatCache, Double.NaN);
+                return;
+            }
+        }
+        if (cache == null) cache = new HashMap<Long, Object>();
     }
 
     // ========== FORMULA OPTIMIZATIONS ==========
@@ -1566,7 +1507,6 @@ public class NaturalArray {
             throw new InternalError("Attempted to add null SequenceFormula");
         }
         
-        // ========== TRACKING ==========
         if (tracked) {
             ArrayTracker.recordFormulaApplication(this);
         }
@@ -1580,7 +1520,6 @@ public class NaturalArray {
             throw new InternalError("Attempted to add null ConditionalFormula");
         }
         
-        // ========== TRACKING ==========
         if (tracked) {
             ArrayTracker.recordFormulaApplication(this);
         }
@@ -1596,9 +1535,9 @@ public class NaturalArray {
         clearCache();
     }
 
-    public void addLinearRecurrenceFormula(LinearRecurrenceFormula formula) {
+    public void addLinearRecurrenceFormula(AccumulationFormula formula) {
         if (formula == null) {
-            throw new InternalError("Attempted to add null LinearRecurrenceFormula");
+            throw new InternalError("Attempted to add null AccumulationFormula");
         }
         
         if (tracked) {
@@ -1608,19 +1547,18 @@ public class NaturalArray {
         if (linearRecurrenceFormulas.isEmpty()) {
             linearRecurrenceFormulas.add(formula);
         } else {
-            int lastIndex = linearRecurrenceFormulas.size() - 1;
-            LinearRecurrenceFormula current = linearRecurrenceFormulas.get(lastIndex);
-            LinearRecurrenceFormula merged = LinearRecurrenceFormula.compose(formula, current);
-            linearRecurrenceFormulas.set(lastIndex, merged);
+            // int lastIndex = linearRecurrenceFormulas.size() - 1;
+            // For now, just add - composition would need to be implemented for AccumulationFormula
+            linearRecurrenceFormulas.add(formula);
         }
         clearCache();
     }
 
-    public void addVectorRecurrenceFormula(VectorRecurrenceFormula formula, int sequenceIndex) {
+    public void addVectorRecurrenceFormula(AccumulationFormula formula, int sequenceIndex) {
         if (formula == null) {
-            throw new InternalError("Attempted to add null VectorRecurrenceFormula");
+            throw new InternalError("Attempted to add null AccumulationFormula");
         }
-        if (sequenceIndex < 0 || sequenceIndex >= formula.dimension) {
+        if (sequenceIndex < 0) {
             throw new ProgramError("Invalid vector recurrence sequence index: " + sequenceIndex);
         }
 
@@ -1628,7 +1566,7 @@ public class NaturalArray {
             ArrayTracker.recordFormulaApplication(this);
         }
 
-        vectorRecurrenceFormulas.add(new VectorRecurrenceBinding(formula, sequenceIndex));
+        vectorRecurrenceFormulas.add(formula);
         clearCache();
     }
 
@@ -1643,156 +1581,113 @@ public class NaturalArray {
     }
 
     private Object evaluateSequenceFormulas(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "evaluateSequenceFormulas");
-        try {
-            if (sequenceFormulas.isEmpty()) return null;
+        if (sequenceFormulas.isEmpty()) return null;
+        
+        for (int i = sequenceFormulas.size() - 1; i >= 0; i--) {
+            SequenceFormula formula = sequenceFormulas.get(i);
+            if (formula.contains(index)) {
+                try {
+                    Object result = formula.evaluate(index, evaluator, context);
+                    if (computedCache == null) {
+                        computedCache = new HashMap<Long, Object>();
+                    }
+                    computedCache.put(index, result);
+                    return result;
+                } catch (ProgramError e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new InternalError(
+                        "Sequence formula evaluation failed at index " + index, e);
+                }
+            }
+        }
+        return null;
+    }
+
+    private Object evaluateConditionalFormulas(long index) {
+        if (conditionalFormulas.isEmpty()) return null;
+
+        for (int i = conditionalFormulas.size() - 1; i >= 0; i--) {
+            ConditionalFormula formula = conditionalFormulas.get(i);
+            if (formula == null) {
+                throw new InternalError("Null ConditionalFormula in list");
+            }
             
-            
-            for (int i = sequenceFormulas.size() - 1; i >= 0; i--) {
-                SequenceFormula formula = sequenceFormulas.get(i);
-                if (formula.contains(index)) {
-                    try {
-                        Object result = formula.evaluate(index, evaluator, context);
+            if (formula.contains(index)) {
+                try {
+                    Object result = formula.evaluate(index, evaluator, context);
+                    if (result != null) {
                         if (computedCache == null) {
                             computedCache = new HashMap<Long, Object>();
                         }
                         computedCache.put(index, result);
-                        return result;
-                    } catch (ProgramError e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new InternalError(
-                            "Sequence formula evaluation failed at index " + index, e);
                     }
+                    return result;
+                } catch (ProgramError e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new InternalError(
+                        "Conditional formula evaluation failed at index " + index, e);
                 }
             }
-            return null;
-        } finally {
-            stopPerfTimer(timer);
         }
-    }
-
-    private Object evaluateConditionalFormulas(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "evaluateConditionalFormulas");
-        try {
-            if (conditionalFormulas.isEmpty()) return null;
-
-            for (int i = conditionalFormulas.size() - 1; i >= 0; i--) {
-                ConditionalFormula formula = conditionalFormulas.get(i);
-                if (formula == null) {
-                    throw new InternalError("Null ConditionalFormula in list");
-                }
-                
-                if (formula.contains(index)) {
-                    try {
-                        Object result = formula.evaluate(index, evaluator, context);
-                        if (result != null) {
-                            if (computedCache == null) {
-                                computedCache = new HashMap<Long, Object>();
-                            }
-                            computedCache.put(index, result);
-                        }
-                        return result;
-                    } catch (ProgramError e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new InternalError(
-                            "Conditional formula evaluation failed at index " + index, e);
-                    }
-                }
-            }
-            return null;
-        } finally {
-            stopPerfTimer(timer);
-        }
+        return null;
     }
 
     private Object evaluateLinearRecurrenceFormulas(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "evaluateLinearRecurrenceFormulas");
-        try {
-            if (linearRecurrenceFormulas.isEmpty()) return null;
+        if (linearRecurrenceFormulas.isEmpty()) return null;
 
-            for (int i = linearRecurrenceFormulas.size() - 1; i >= 0; i--) {
-                LinearRecurrenceFormula formula = linearRecurrenceFormulas.get(i);
-                if (formula == null) {
-                    throw new InternalError("Null LinearRecurrenceFormula in list");
-                }
-                
-                if (formula.contains(index)) {
-                    try {
-                        Object result = formula.evaluate(index);
-                        if (result != null) {
-                            if (computedCache == null) {
-                                computedCache = new HashMap<Long, Object>();
-                            }
-                            computedCache.put(index, result);
-                        }
-                        return result;
-                    } catch (ProgramError e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new InternalError(
-                            "Linear recurrence formula evaluation failed at index " + index, e);
-                    }
-                }
+        for (int i = linearRecurrenceFormulas.size() - 1; i >= 0; i--) {
+            AccumulationFormula formula = linearRecurrenceFormulas.get(i);
+            if (formula == null) {
+                throw new InternalError("Null AccumulationFormula in list");
             }
-            return null;
-        } finally {
-            stopPerfTimer(timer);
+            
+            // For scalar recurrence applied to array
+            try {
+                Object result = formula.evaluate(AutoStackingNumber.fromLong(index));
+                if (result != null) {
+                    if (computedCache == null) {
+                        computedCache = new HashMap<Long, Object>();
+                    }
+                    computedCache.put(index, result);
+                }
+                return result;
+            } catch (ProgramError e) {
+                throw e;
+            } catch (Exception e) {
+                throw new InternalError(
+                    "Linear recurrence formula evaluation failed at index " + index, e);
+            }
         }
+        return null;
     }
 
     private Object evaluateVectorRecurrenceFormulas(long index) {
-        String timer = startPerfTimer(DebugSystem.Level.TRACE, PERF_PREFIX + "evaluateVectorRecurrenceFormulas");
-        try {
-            if (vectorRecurrenceFormulas.isEmpty()) return null;
+        if (vectorRecurrenceFormulas.isEmpty()) return null;
 
-            for (int i = vectorRecurrenceFormulas.size() - 1; i >= 0; i--) {
-                VectorRecurrenceBinding binding = vectorRecurrenceFormulas.get(i);
-                if (binding == null || binding.formula == null) {
-                    throw new InternalError("Null VectorRecurrenceFormula binding in list");
-                }
-                if (binding.formula.contains(index)) {
-                    try {
-                        Object result = binding.formula.evaluate(index, binding.sequenceIndex);
-                        if (result != null) {
-                            if (computedCache == null) {
-                                computedCache = new HashMap<Long, Object>();
-                            }
-                            computedCache.put(index, result);
-                        }
-                        return result;
-                    } catch (ProgramError e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new InternalError(
-                            "Vector recurrence formula evaluation failed at index " + index, e);
-                    }
-                }
+        for (int i = vectorRecurrenceFormulas.size() - 1; i >= 0; i--) {
+            AccumulationFormula binding = vectorRecurrenceFormulas.get(i);
+            if (binding == null || binding == null) {
+                throw new InternalError("Null AccumulationFormula in list");
             }
-            return null;
-        } finally {
-            stopPerfTimer(timer);
+            try {
+                Object result = binding.evaluate(AutoStackingNumber.fromLong(index));
+                if (result != null) {
+                    if (computedCache == null) {
+                        computedCache = new HashMap<Long, Object>();
+                    }
+                    computedCache.put(index, result);
+                }
+                return result;
+            } catch (ProgramError e) {
+                throw e;
+            } catch (Exception e) {
+                throw new InternalError(
+                    "Vector recurrence formula evaluation failed at index " + index, e);
+            }
         }
-    }
-
-    private static boolean isTimerEnabled(DebugSystem.Level level) {
-        DebugSystem.Level current = DebugSystem.getLevel();
-        return current != DebugSystem.Level.OFF && current.getLevel() >= level.getLevel();
-    }
-
-    private static String startPerfTimer(DebugSystem.Level level, String operation) {
-        if (!isTimerEnabled(level)) {
-            return null;
-        }
-        DebugSystem.startTimer(level, operation);
-        return operation;
-    }
-
-    private static void stopPerfTimer(String timerName) {
-        if (timerName != null) {
-            DebugSystem.stopTimer(timerName);
-        }
+        return null;
     }
 
     // ========== OUTPUT CACHING METHODS ==========
@@ -1874,12 +1769,10 @@ public class NaturalArray {
         return elementType;
     }
     
-    // Check if conversion is needed
     public boolean needsConversion() {
         return convertToString;
     }
     
-    // Get target element type
     public String getTargetElementType() {
         return targetElementType;
     }

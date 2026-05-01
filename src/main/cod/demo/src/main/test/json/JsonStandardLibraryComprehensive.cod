@@ -6,7 +6,7 @@ share JsonStandardLibraryComprehensive {
     share check(label: text, actual: text, expected: text) {
         if actual == expected {
             out("PASS " + label)
-            fin
+            return
         }
         out("FAIL " + label)
         out("  actual:   " + actual)
@@ -16,7 +16,7 @@ share JsonStandardLibraryComprehensive {
     share checkBool(label: text, actual: bool, expected: bool) {
         if actual == expected {
             out("PASS " + label)
-            fin
+            return
         }
         out("FAIL " + label)
         out("  actual:   " + actual)
@@ -49,20 +49,16 @@ share JsonStandardLibraryComprehensive {
         mixedArray := Json.parse("[1, true, null, \"x\", [2,3]]")
         JsonStandardLibraryComprehensive.checkBool("array kind", mixedArray.isArray(), true)
         JsonStandardLibraryComprehensive.check("array size", "" + mixedArray.size(), "5")
-        nestedArray := mixedArray.get(4)
-        JsonStandardLibraryComprehensive.checkBool("array nested kind", nestedArray.isArray(), true)
-        nestedValue := nestedArray.get(1)
-        JsonStandardLibraryComprehensive.check("array nested value", nestedValue.asNumberText(), "3")
+        JsonStandardLibraryComprehensive.checkBool("array nested kind", mixedArray.get(4).isArray(), true)
+        JsonStandardLibraryComprehensive.check("array nested value", mixedArray.get(4).get(1).asNumberText(), "3")
 
         objectValue := Json.parse("\{\"name\":\"Coderive\",\"ok\":true,\"n\":10,\"tags\":[\"lang\",\"json\"],\"meta\":\{\"major\":0\}\}")
         JsonStandardLibraryComprehensive.checkBool("object kind", objectValue.isObject(), true)
         JsonStandardLibraryComprehensive.checkBool("object has name", objectValue.has("name"), true)
         JsonStandardLibraryComprehensive.check("object name", objectValue.getKey("name").asText(), "Coderive")
         JsonStandardLibraryComprehensive.checkBool("object ok", objectValue.getKey("ok").asBool(), true)
-        tagsValue := objectValue.getKey("tags")
-        JsonStandardLibraryComprehensive.check("object nested array value", tagsValue.get(1).asText(), "json")
-        metaValue := objectValue.getKey("meta")
-        JsonStandardLibraryComprehensive.check("object nested object value", metaValue.getKey("major").asNumberText(), "0")
+        JsonStandardLibraryComprehensive.check("object nested array value", objectValue.getKey("tags").get(1).asText(), "json")
+        JsonStandardLibraryComprehensive.check("object nested object value", objectValue.getKey("meta").getKey("major").asNumberText(), "0")
 
         compact := Json.serialize(objectValue)
         JsonStandardLibraryComprehensive.check("compact serialize", compact, "\{\"name\":\"Coderive\",\"ok\":true,\"n\":10,\"tags\":[\"lang\",\"json\"],\"meta\":\{\"major\":0\}\}")

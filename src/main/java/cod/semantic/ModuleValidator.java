@@ -70,14 +70,14 @@ public final class ModuleValidator {
                 throw error("Static modules with top-level methods must declare a unit.", errorToken);
             }
             if (isSelfBroadcast) {
-                program.unit.mainClassName = null;
+                throw error("Self broadcast (main: this) is only valid for script files with direct code.", errorToken);
             }
             return ProgramType.STATIC_MODULE;
         }
 
         if (hasClasses || hasPolicies) {
-            if (isSelfBroadcast) {
-                program.unit.mainClassName = null;
+            if (hasUnit && isSelfBroadcast) {
+                throw error("Self broadcast (main: this) is only valid for script files with direct code.", errorToken);
             }
             return ProgramType.MODULE;
         }

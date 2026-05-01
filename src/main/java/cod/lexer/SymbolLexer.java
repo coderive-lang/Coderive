@@ -6,9 +6,7 @@ import java.util.*;
 
 public class SymbolLexer {
 
-    private final MainLexer lexer;
-    
-    // DFA states
+    private final LexerSource source;
     private static final int _START = 0;
     private static final int _COLON = 1;
     private static final int _COLON_COLON = 2;
@@ -35,23 +33,12 @@ public class SymbolLexer {
     private static final int _DOT_DOT = 23;
     
     private static final int MAX_STATE = 30;
-    
-    // Transition table: [current_state][char] = next_state
     private static final int[][] TRANSITION = new int[MAX_STATE][128];
-    
-    // Accept states: [state] = Symbol (for multi-character symbols)
     private static final Symbol[] ACCEPT = new Symbol[MAX_STATE];
-    
-    // Single-character symbols (character -> Symbol)
     private static final Symbol[] SINGLE_CHAR_SYMBOLS = new Symbol[128];
     
     static {
-        // Initialize all transitions to -1 (invalid)
-        for (int i = 0; i < MAX_STATE; i++) {
-            Arrays.fill(TRANSITION[i], -1);
-        }
-        
-        // ===== SINGLE-CHARACTER SYMBOLS =====
+        for (int i = 0; i < MAX_STATE; i++) Arrays.fill(TRANSITION[i], -1);
         SINGLE_CHAR_SYMBOLS['|'] = PIPE;
         SINGLE_CHAR_SYMBOLS['&'] = AMPERSAND;
         SINGLE_CHAR_SYMBOLS['?'] = QUESTION;
@@ -68,9 +55,6 @@ public class SymbolLexer {
         SINGLE_CHAR_SYMBOLS['\\'] = LAMBDA;
         SINGLE_CHAR_SYMBOLS['#'] = RANGE_HASH;
         
-        // ===== MULTI-CHARACTER SYMBOLS - Setup transitions =====
-        
-        // Setup transitions from start state
         TRANSITION[_START][':'] = _COLON;
         TRANSITION[_START]['='] = _EQUALS;
         TRANSITION[_START]['>'] = _GREATER;
@@ -83,169 +67,70 @@ public class SymbolLexer {
         TRANSITION[_START]['~'] = _TILDE;
         TRANSITION[_START]['.'] = _DOT;
         
-        // :: (double colon)
-        TRANSITION[_COLON][':'] = _COLON_COLON;
-        ACCEPT[_COLON_COLON] = DOUBLE_COLON;
-        
-        // := (colon equals)
-        TRANSITION[_COLON]['='] = _COLON_EQUALS;
-        ACCEPT[_COLON_EQUALS] = DOUBLE_COLON_ASSIGN;
-        
-        // Single colon is accepted at state COLON
+        TRANSITION[_COLON][':'] = _COLON_COLON; ACCEPT[_COLON_COLON] = DOUBLE_COLON;
+        TRANSITION[_COLON]['='] = _COLON_EQUALS; ACCEPT[_COLON_EQUALS] = DOUBLE_COLON_ASSIGN;
         ACCEPT[_COLON] = COLON;
-        
-        // == (equals equals)
-        TRANSITION[_EQUALS]['='] = _EQUALS_EQUALS;
-        ACCEPT[_EQUALS_EQUALS] = EQ;
-        
-        // Single equals is accepted at state EQUALS
+        TRANSITION[_EQUALS]['='] = _EQUALS_EQUALS; ACCEPT[_EQUALS_EQUALS] = EQ;
         ACCEPT[_EQUALS] = ASSIGN;
-        
-        // >= (greater than or equal)
-        TRANSITION[_GREATER]['='] = _GREATER_EQUALS;
-        ACCEPT[_GREATER_EQUALS] = GTE;
-        
-        // Single greater than is accepted at state GREATER
+        TRANSITION[_GREATER]['='] = _GREATER_EQUALS; ACCEPT[_GREATER_EQUALS] = GTE;
         ACCEPT[_GREATER] = GT;
-        
-        // <= (less than or equal)
-        TRANSITION[_LESS]['='] = _LESS_EQUALS;
-        ACCEPT[_LESS_EQUALS] = LTE;
-        
-        // Single less than is accepted at state LESS
+        TRANSITION[_LESS]['='] = _LESS_EQUALS; ACCEPT[_LESS_EQUALS] = LTE;
         ACCEPT[_LESS] = LT;
-        
-        // != (bang equals)
-        TRANSITION[_BANG]['='] = _BANG_EQUALS;
-        ACCEPT[_BANG_EQUALS] = NEQ;
-        
-        // Single bang is accepted at state BANG
+        TRANSITION[_BANG]['='] = _BANG_EQUALS; ACCEPT[_BANG_EQUALS] = NEQ;
         ACCEPT[_BANG] = BANG;
-        
-        // += (plus equals)
-        TRANSITION[_PLUS]['='] = _PLUS_EQUALS;
-        ACCEPT[_PLUS_EQUALS] = PLUS_ASSIGN;
-        
-        // Single plus is accepted at state PLUS
+        TRANSITION[_PLUS]['='] = _PLUS_EQUALS; ACCEPT[_PLUS_EQUALS] = PLUS_ASSIGN;
         ACCEPT[_PLUS] = PLUS;
-        
-        // -= (minus equals)
-        TRANSITION[_MINUS]['='] = _MINUS_EQUALS;
-        ACCEPT[_MINUS_EQUALS] = MINUS_ASSIGN;
-        
-        // Single minus is accepted at state MINUS
+        TRANSITION[_MINUS]['='] = _MINUS_EQUALS; ACCEPT[_MINUS_EQUALS] = MINUS_ASSIGN;
         ACCEPT[_MINUS] = MINUS;
-        
-        // *= (multiply equals)
-        TRANSITION[_MUL]['='] = _MUL_EQUALS;
-        ACCEPT[_MUL_EQUALS] = MUL_ASSIGN;
-        
-        // Single multiply is accepted at state MUL
+        TRANSITION[_MUL]['='] = _MUL_EQUALS; ACCEPT[_MUL_EQUALS] = MUL_ASSIGN;
         ACCEPT[_MUL] = MUL;
-        
-        // /= (divide equals)
-        TRANSITION[_DIV]['='] = _DIV_EQUALS;
-        ACCEPT[_DIV_EQUALS] = DIV_ASSIGN;
-        
-        // Single divide is accepted at state DIV
+        TRANSITION[_DIV]['='] = _DIV_EQUALS; ACCEPT[_DIV_EQUALS] = DIV_ASSIGN;
         ACCEPT[_DIV] = DIV;
-        
-        // ~> (tilde arrow)
-        TRANSITION[_TILDE]['>'] = _TILDE_ARROW;
-        ACCEPT[_TILDE_ARROW] = TILDE_ARROW;
-        
-        // Single tilde is not used, but could be accepted
+        TRANSITION[_TILDE]['>'] = _TILDE_ARROW; ACCEPT[_TILDE_ARROW] = TILDE_ARROW;
         ACCEPT[_TILDE] = TILDE_ARROW;
-        
-        // .. (range dots)
-        TRANSITION[_DOT]['.'] = _DOT_DOT;
-        ACCEPT[_DOT_DOT] = RANGE_DOTDOT;
-        
-        // Single dot is accepted at state DOT
+        TRANSITION[_DOT]['.'] = _DOT_DOT; ACCEPT[_DOT_DOT] = RANGE_DOTDOT;
         ACCEPT[_DOT] = DOT;
     }
 
-    public SymbolLexer(MainLexer lexer) {
-        this.lexer = lexer;
-    }
+    public SymbolLexer(LexerSource source) { this.source = source; }
 
     public Token scan() {
-        int startLine = lexer.line;
-        int startCol = lexer.column;
-        int startPos = lexer.getPosition();
+        char[] input = source.getInputArray();
+        int pos = source.getPosition();
+        if (pos >= input.length) return null;
         
-        char first = lexer.peek();
-        if (first == 0 || first >= 128) return null;
+        char first = input[pos];
+        if (first >= 128 || !CharClassifier.IS_SYMBOL_START[first]) return null;
         
+        int startLine = source.getLine();
+        int startCol = source.getColumn();
+        int startPos = pos;
         int state = _START;
         int lastAcceptPos = -1;
         Symbol lastAcceptSymbol = null;
-        int length = 0;
         
-        // DFA traversal for multi-character symbols
-        while (lexer.getPosition() < lexer.getInput().length) {
-            char c = lexer.peek();
+        while (pos < input.length) {
+            char c = input[pos];
             if (c >= 128) break;
-            
             int nextState = TRANSITION[state][c];
             if (nextState == -1) break;
-            
             state = nextState;
-            lexer.consume();
-            length++;
-            
-            if (ACCEPT[state] != null) {
-                lastAcceptPos = startPos + length;
-                lastAcceptSymbol = ACCEPT[state];
-            }
+            pos++;
+            if (ACCEPT[state] != null) { lastAcceptPos = pos; lastAcceptSymbol = ACCEPT[state]; }
         }
         
-        // If we had a multi-character match, use it
         if (lastAcceptPos != -1) {
-            // Roll back to last accept position
-            lexer.setPosition(lastAcceptPos);
-            
-            int finalLength = lastAcceptPos - startPos;
-            char[] source = lexer.getInputArray();
-            return Token.createSymbol(source, startPos, finalLength, 
-                                      startLine, startCol, lastAcceptSymbol);
+            int length = lastAcceptPos - startPos;
+            source.setPosition(lastAcceptPos);
+            source.setColumn(startCol + length);
+            return Token.createSymbol(input, startPos, length, startLine, startCol, lastAcceptSymbol);
         }
         
-        // Check if the first character is a single-character symbol
         if (first < 128 && SINGLE_CHAR_SYMBOLS[first] != null) {
-            lexer.consume();
-            char[] source = lexer.getInputArray();
-            return Token.createSymbol(source, startPos, 1, 
-                                      startLine, startCol, SINGLE_CHAR_SYMBOLS[first]);
+            source.setPosition(startPos + 1);
+            source.setColumn(startCol + 1);
+            return Token.createSymbol(input, startPos, 1, startLine, startCol, SINGLE_CHAR_SYMBOLS[first]);
         }
-        
         return null;
-    }
-
-    public boolean isSymbolStart(char c) {
-        if (c >= 128) return false;
-        return TRANSITION[_START][c] != -1 || SINGLE_CHAR_SYMBOLS[c] != null;
-    }
-
-    public Symbol getSymbolForPattern(String pattern) {
-        if (pattern == null || pattern.isEmpty()) return null;
-        
-        // Check single character first
-        if (pattern.length() == 1) {
-            char c = pattern.charAt(0);
-            if (c < 128 && SINGLE_CHAR_SYMBOLS[c] != null) {
-                return SINGLE_CHAR_SYMBOLS[c];
-            }
-        }
-        
-        // Check multi-character patterns
-        char[] chars = pattern.toCharArray();
-        int state = _START;
-        for (char c : chars) {
-            if (c >= 128) return null;
-            state = TRANSITION[state][c];
-            if (state == -1) return null;
-        }
-        return ACCEPT[state];
     }
 }

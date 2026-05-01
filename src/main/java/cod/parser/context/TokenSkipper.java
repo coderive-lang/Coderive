@@ -3,7 +3,6 @@ package cod.parser.context;
 import cod.lexer.Token;
 import cod.lexer.TokenType;
 import static cod.lexer.TokenType.*;
-import cod.parser.context.*;
 import cod.lexer.TokenType.Keyword;
 import static cod.lexer.TokenType.Keyword.*;
 import cod.lexer.TokenType.Symbol;
@@ -20,49 +19,20 @@ public class TokenSkipper {
     this.ctx = new ParserContext(tokens);
   }
 
-  public ParserContext ctx() {
-    return ctx;
-  }
+  public ParserContext ctx() { return ctx; }
+  public Token consume() { return ctx.consume(); }
+  public Token now() { return ctx.now(); }
 
-  public Token consume() {
-    return ctx.consume();
-  }
+  protected boolean is(Token tk, Symbol... sb) { return ObjectValidator.is(tk, sb); }
+  protected boolean is(Token tk, Keyword... kw) { return ObjectValidator.is(tk, kw); }
+  protected boolean is(Token tk, TokenType... type) { return ObjectValidator.is(tk, type); }
+  protected boolean any(boolean... values) { return ObjectValidator.any(values); }
 
-  public Token now() {
-    return ctx.now();
-  }
+  private boolean is(Symbol... sb) { return is(now(), sb); }
+  private boolean is(Keyword... kw) { return is(now(), kw); }
+  private boolean is(TokenType... type) { return is(now(), type); }
 
-  protected boolean is(Token tk, Symbol... sb) {
-    return ObjectValidator.is(tk, sb);
-  }
-
-  protected boolean is(Token tk, Keyword... kw) {
-    return ObjectValidator.is(tk, kw);
-  }
-
-  protected boolean is(Token tk, TokenType... type) {
-    return ObjectValidator.is(tk, type);
-  }
-
-  protected boolean any(boolean... values) {
-    return ObjectValidator.any(values);
-  }
-
-  private boolean is(Symbol... sb) {
-    return is(now(), sb);
-  }
-
-  private boolean is(Keyword... kw) {
-    return is(now(), kw);
-  }
-
-  private boolean is(TokenType... type) {
-    return is(now(), type);
-  }
-
-  public Token expect(Keyword kw) {
-    return ctx.expect(kw);
-  }
+  public Token expect(Keyword kw) { return ctx.expect(kw); }
 
   protected boolean consume(Symbol expectedSymbol) {
     if (is(expectedSymbol)) {
@@ -99,7 +69,7 @@ public class TokenSkipper {
     while (!is(EOF)) {
       Token t = now();
 
-      if (any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, FIN))) {
+      if (any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, EXIT))) {
         break;
       }
 
@@ -156,7 +126,7 @@ public class TokenSkipper {
 
       if (braceDepth == 0 && parenDepth == 0 && bracketDepth == 0) {
         if (is(t, COMMA)) return;
-        if (is(t, IF, FOR, FIN, ELSE, ELIF, SHARE, LOCAL, UNIT)) return;
+        if (is(t, IF, FOR, EXIT, ELSE, ELIF, SHARE, LOCAL, UNIT)) return;
       }
 
       consume();
@@ -164,60 +134,53 @@ public class TokenSkipper {
   }
 
   public void methodDecl() {
-    System.err.println("DEBUG - TokenSkipper.methodDecl() starting at token: '" + now().getText() + "' line " + now().line);
-    int startPos = ctx.getPosition();
     boolean isBuiltin = false;
     if (is(BUILTIN)) {
-        isBuiltin = true;
-        consume();
+      isBuiltin = true;
+      consume();
     }
 
     if (is(SHARE, LOCAL)) {
-        consume();
+      consume();
     }
 
     if (is(ID) || canBeMethod(now())) {
-        consume();
+      consume();
     }
 
     if (is(LPAREN)) {
-        ctx.expect(LPAREN);
-        until(RPAREN);
+      ctx.expect(LPAREN);
+      until(RPAREN);
     }
 
     if (is(DOUBLE_COLON)) {
-        ctx.expect(DOUBLE_COLON);
-        slotContract();
+      ctx.expect(DOUBLE_COLON);
+      slotContract();
     }
 
     if (isBuiltin) {
-        return;
+      return;
     }
 
-    // Consume the method body entirely
     if (is(TILDE_ARROW)) {
-        ctx.expect(TILDE_ARROW);
-        
-        // Skip tilde-arrow assignments
-        while (!is(EOF) && !is(COMMA) && !isStmtEnd()) {
-            if (is(LBRACE)) {
-                ctx.expect(LBRACE);
-                until(RBRACE);  // Skip entire braced block
-            } else {
-                consume();
-            }
+      ctx.expect(TILDE_ARROW);
+      while (!is(EOF) && !is(COMMA) && !isStmtEnd()) {
+        if (is(LBRACE)) {
+          ctx.expect(LBRACE);
+          until(RBRACE);
+        } else {
+          consume();
         }
+      }
     } else if (is(LBRACE)) {
-        ctx.expect(LBRACE);
-        until(RBRACE);  // Skip entire method body
+      ctx.expect(LBRACE);
+      until(RBRACE);
     }
-    int endPos = ctx.getPosition();
-    System.err.println("DEBUG - TokenSkipper.methodDecl() consumed from position " + startPos + " to " + endPos);
   }
 
   public void slotAsmt() {
     if (is(ID)) {
-      Token next = ctx.next();
+      Token next = ctx.next(); // LL(0..1)
       if (is(next, COLON)) {
         consume();
         consume();
@@ -225,12 +188,10 @@ public class TokenSkipper {
     }
     expr();
   }
-  
+
   private boolean isStmtEnd() {
     Token t = now();
-    return any(is(t, RBRACE), 
-               is(t, ELSE, ELIF, IF, FOR, FIN),
-               is(t, EOF));
+    return any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, EXIT), is(t, EOF));
   }
 
   public void slotContract() {
@@ -244,12 +205,12 @@ public class TokenSkipper {
   }
 
   public void stmt() {
-    Token current = now(); // Current token will never be null
+    Token current = now(); 
     if (is(current, IF)) {
       ifStmt();
     } else if (is(current, FOR)) {
       forStmt();
-    } else if (is(current, FIN)) {
+    } else if (is(current, EXIT)) {
       consume();
     } else if (is(current, SHARE, LOCAL)) {
       if (is(current, ID)) {
@@ -269,8 +230,7 @@ public class TokenSkipper {
   public void forStmt() {
     ctx.expect(FOR);
     if (is(ID)) consume();
-    
-    // Handle step
+
     if (is(BY)) {
       ctx.expect(BY);
       expr();
@@ -278,26 +238,22 @@ public class TokenSkipper {
     } else if (is(RANGE_HASH)) {
       ctx.expect(RANGE_HASH);
       expr();
-      // No OF needed
     }
-    
-    expr(); // Source/start expression
-    
-    // Handle range
+
+    expr(); 
+
     if (is(RANGE_DOTDOT)) {
       ctx.expect(RANGE_DOTDOT);
-      expr(); // End expression
-      
-      // Optional step after end
+      expr(); 
       if (is(RANGE_HASH)) {
         ctx.expect(RANGE_HASH);
         expr();
       }
     } else if (is(TO)) {
       ctx.expect(TO);
-      expr(); // End expression
+      expr(); 
     }
-    
+
     stmtOrBlock();
   }
 
@@ -323,34 +279,25 @@ public class TokenSkipper {
     Token current = now();
     if (is(current, SHARE, LOCAL)) {
       ctx.consume();
-     
     }
 
     current = now();
     if (is(current, POLICY)) {
       ctx.consume();
-     
     }
 
     if (is(ID)) {
       ctx.consume();
-     
     }
 
     current = now();
     while (is(current, WITH)) {
       ctx.consume();
-     
       hasQualifiedName();
-     
-
       while (is(COMMA)) {
         ctx.consume();
-       
         hasQualifiedName();
-       
       }
-
       current = now();
     }
 
@@ -381,55 +328,38 @@ public class TokenSkipper {
 
   public boolean isPolicyMethod() {
     Token current = now();
-
     boolean isValidName = is(current, ID) || canBeMethod(current);
-
     if (!isValidName) return false;
 
-    ctx.save();
-    try {
-      ctx.consume();
-     
-      return is(LPAREN);
-    } finally {
-      ctx.restore();
-    }
+    // Fast LL(0..1) check directly over the index
+    Token next = ctx.next();
+    return next != null && is(next, LPAREN);
   }
 
   public void typeDecl() {
     Token current = now();
     if (is(current, SHARE, LOCAL)) {
       ctx.consume();
-     
     }
 
     if (is(ID)) {
       ctx.consume();
-     
     }
 
     current = now();
     if (is(current, IS)) {
       ctx.consume();
-     
       hasQualifiedName();
-     
     }
 
     current = now();
     while (is(current, WITH)) {
       ctx.consume();
-     
       hasQualifiedName();
-     
-
       while (is(COMMA)) {
         ctx.consume();
-       
         hasQualifiedName();
-       
       }
-
       current = now();
     }
 
@@ -449,25 +379,20 @@ public class TokenSkipper {
   }
 
   public void policyMethodDecl() {
-    Token current = now();
-    if (is(current, ID) || canBeMethod(current)) {
+    if (isPolicyMethod()) {
       ctx.consume();
-     
-    }
+      if (is(LPAREN)) {
+        ctx.consume(); 
+        until(RPAREN);
+      }
 
-    if (is(LPAREN)) {
-      ctx.consume();
-      until(RPAREN);
-    }
-
-    if (is(DOUBLE_COLON)) {
-      ctx.consume();
-
-      typeRef();
-
-      while (is(COMMA)) {
+      if (is(DOUBLE_COLON)) {
         ctx.consume();
         typeRef();
+        while (is(COMMA)) {
+          ctx.consume();
+          typeRef();
+        }
       }
     }
   }

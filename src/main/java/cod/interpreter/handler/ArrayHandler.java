@@ -3,10 +3,8 @@ package cod.interpreter.handler;
 import cod.ast.node.*;
 import cod.error.InternalError;
 import cod.error.ProgramError;
-import cod.interpreter.Interpreter;
 import cod.interpreter.InterpreterVisitor;
 import cod.interpreter.exception.BreakLoopException;
-import cod.interpreter.exception.EarlyExitException;
 import cod.interpreter.exception.SkipIterationException;
 import cod.math.AutoStackingNumber;
 import cod.range.NaturalArray;
@@ -15,7 +13,7 @@ import cod.range.RangeObjects;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ArrayOperationHandler {
+public class ArrayHandler {
     private static final class LoopVariableBinding {
         final String name;
         final int valueScopeIndex;
@@ -31,27 +29,23 @@ public class ArrayOperationHandler {
     }
 
     private final InterpreterVisitor dispatcher;
-    private final Interpreter interpreter;
     private final TypeHandler typeSystem;
-    private final ExpressionHandler expressionHandler;
-    private final ContextHandler contextHandler;
+    private final ExpressionHandler exprHandler;
+    private final ContextHandler ctxHandler;
 
-    public ArrayOperationHandler(
+    public ArrayHandler(
         InterpreterVisitor dispatcher,
-        Interpreter interpreter,
         TypeHandler typeSystem,
-        ExpressionHandler expressionHandler,
-        ContextHandler contextHandler) {
-        if (dispatcher == null) throw new InternalError("ArrayOperationHandler dispatcher is null");
-        if (interpreter == null) throw new InternalError("ArrayOperationHandler interpreter is null");
-        if (typeSystem == null) throw new InternalError("ArrayOperationHandler typeSystem is null");
-        if (expressionHandler == null) throw new InternalError("ArrayOperationHandler expressionHandler is null");
-        if (contextHandler == null) throw new InternalError("ArrayOperationHandler contextHandler is null");
+        ExpressionHandler exprHandler,
+        ContextHandler ctxHandler) {
+        if (dispatcher == null) throw new InternalError("ArrayHandler dispatcher is null");
+        if (typeSystem == null) throw new InternalError("ArrayHandler typeSystem is null");
+        if (exprHandler == null) throw new InternalError("ArrayHandler exprHandler is null");
+        if (ctxHandler == null) throw new InternalError("ArrayHandler ctxHandler is null");
         this.dispatcher = dispatcher;
-        this.interpreter = interpreter;
         this.typeSystem = typeSystem;
-        this.expressionHandler = expressionHandler;
-        this.contextHandler = contextHandler;
+        this.exprHandler = exprHandler;
+        this.ctxHandler = ctxHandler;
     }
 
     public Object executeForLoopNormally(For node) {
@@ -112,8 +106,6 @@ public class ArrayOperationHandler {
             return null;
         } catch (ProgramError e) {
             throw e;
-        } catch (EarlyExitException e) {
-            throw e;
         } catch (Exception e) {
             throw new InternalError("Array loop execution failed", e);
         }
@@ -166,8 +158,6 @@ public class ArrayOperationHandler {
 
             return executeAdditiveLoop(ctx, node, startObj, endObj, step, loopBinding);
         } catch (ProgramError e) {
-            throw e;
-        } catch (EarlyExitException e) {
             throw e;
         } catch (Exception e) {
             throw new InternalError("Range loop execution failed", e);
@@ -257,8 +247,6 @@ public class ArrayOperationHandler {
             throw e;
         } catch (ProgramError e) {
             throw e;
-        } catch (EarlyExitException e) {
-            throw e;
         } catch (Exception e) {
             throw new InternalError("Loop iteration failed", e);
         }
@@ -282,8 +270,6 @@ public class ArrayOperationHandler {
         } catch (BreakLoopException e) {
             throw e;
         } catch (ProgramError e) {
-            throw e;
-        } catch (EarlyExitException e) {
             throw e;
         } catch (Exception e) {
             throw new InternalError("Primitive loop iteration failed", e);
@@ -335,8 +321,6 @@ public class ArrayOperationHandler {
             return null;
         } catch (ProgramError e) {
             throw e;
-        } catch (EarlyExitException e) {
-            throw e;
         } catch (Exception e) {
             throw new InternalError("Primitive additive loop execution failed", e);
         }
@@ -351,8 +335,6 @@ public class ArrayOperationHandler {
                     break;
                 } catch (BreakLoopException e) {
                     throw e;
-                } catch (EarlyExitException e) {
-                    throw e;
                 }
 
                 if (!ctx.slotsInCurrentPath.isEmpty()
@@ -361,8 +343,6 @@ public class ArrayOperationHandler {
         } catch (BreakLoopException e) {
             throw e;
         } catch (ProgramError e) {
-            throw e;
-        } catch (EarlyExitException e) {
             throw e;
         } catch (Exception e) {
             throw new InternalError("Loop body execution failed", e);
@@ -406,7 +386,7 @@ public class ArrayOperationHandler {
 
             if (arrayObj instanceof String) {
                 String text = (String) arrayObj;
-                int index = expressionHandler.toIntIndex(indexObj);
+                int index = exprHandler.toIntIndex(indexObj);
                 index = normalizeTextIndex(index, text.length());
                 if (index < 0 || index >= text.length()) {
                     throw new ProgramError(
@@ -417,7 +397,7 @@ public class ArrayOperationHandler {
 
             if (arrayObj instanceof NaturalArray) {
                 NaturalArray natural = (NaturalArray) arrayObj;
-                long index = expressionHandler.toLongIndex(indexObj);
+                long index = exprHandler.toLongIndex(indexObj);
 
                 if (natural.needsConversion()) {
                     return natural.get(index, true);
@@ -435,7 +415,7 @@ public class ArrayOperationHandler {
                     }
                     return list.get(index);
                 } else {
-                    int index = expressionHandler.toIntIndex(indexObj);
+                    int index = exprHandler.toIntIndex(indexObj);
                     if (index < 0 || index >= list.size()) {
                         throw new ProgramError(
                             "Index out of bounds: " + index + " for array of size " + list.size());
@@ -464,7 +444,7 @@ public class ArrayOperationHandler {
             Object start = dispatcher.dispatch(node.start);
             Object end = dispatcher.dispatch(node.end);
 
-            return RangeObjects.createRangeSpec(contextHandler.resolveInternalRangeSpecType(), step, start, end);
+            return RangeObjects.createRangeSpec(ctxHandler.resolveInternalRangeSpecType(), step, start, end);
         } catch (ProgramError e) {
             throw e;
         } catch (Exception e) {
@@ -486,7 +466,7 @@ public class ArrayOperationHandler {
                 }
                 ranges.add(range);
             }
-            return RangeObjects.createMultiRangeSpec(contextHandler.resolveInternalMultiRangeSpecType(), ranges);
+            return RangeObjects.createMultiRangeSpec(ctxHandler.resolveInternalMultiRangeSpecType(), ranges);
         } catch (ProgramError e) {
             throw e;
         } catch (Exception e) {
@@ -535,13 +515,13 @@ public class ArrayOperationHandler {
             }
             if (current instanceof NaturalArray) {
                 NaturalArray natural = (NaturalArray) current;
-                long idx = expressionHandler.toLongIndex(indexObj);
+                long idx = exprHandler.toLongIndex(indexObj);
                 current = natural.needsConversion() ? natural.get(idx, true) : natural.get(idx);
                 continue;
             }
             if (current instanceof List) {
                 List<Object> list = (List<Object>) current;
-                int idx = expressionHandler.toIntIndex(indexObj);
+                int idx = exprHandler.toIntIndex(indexObj);
                 if (idx < 0 || idx >= list.size()) {
                     throw new ProgramError("Index out of bounds: " + idx + " for array of size " + list.size());
                 }
@@ -558,13 +538,13 @@ public class ArrayOperationHandler {
         try {
             long start, end;
 
-            start = expressionHandler.toLongIndex(RangeObjects.getStart(range));
+            start = exprHandler.toLongIndex(RangeObjects.getStart(range));
             if (start < 0) start = list.size() + start;
 
-            end = expressionHandler.toLongIndex(RangeObjects.getEnd(range));
+            end = exprHandler.toLongIndex(RangeObjects.getEnd(range));
             if (end < 0) end = list.size() + end;
 
-            long step = expressionHandler.calculateStep(range);
+            long step = exprHandler.calculateStep(range);
 
             List<Object> result = new ArrayList<Object>();
             if (step > 0) {
@@ -602,9 +582,9 @@ public class ArrayOperationHandler {
 
     public String applyStringRangeIndex(String text, Object range) {
         try {
-            long start = expressionHandler.toLongIndex(RangeObjects.getStart(range));
-            long end = expressionHandler.toLongIndex(RangeObjects.getEnd(range));
-            long step = expressionHandler.calculateStep(range);
+            long start = exprHandler.toLongIndex(RangeObjects.getStart(range));
+            long end = exprHandler.toLongIndex(RangeObjects.getEnd(range));
+            long step = exprHandler.calculateStep(range);
 
             int length = text.length();
             start = normalizeTextIndex(start, length);
@@ -656,13 +636,13 @@ public class ArrayOperationHandler {
 
         if (range.step != null) {
             Object stepObj = dispatcher.dispatch(range.step);
-            return expressionHandler.toLong(stepObj);
+            return exprHandler.toLong(stepObj);
         }
 
         Object startObj = dispatcher.dispatch(range.start);
         Object endObj = dispatcher.dispatch(range.end);
-        long start = expressionHandler.toLong(startObj);
-        long end = expressionHandler.toLong(endObj);
+        long start = exprHandler.toLong(startObj);
+        long end = exprHandler.toLong(endObj);
 
         return (start < end) ? 1L : -1L;
     }

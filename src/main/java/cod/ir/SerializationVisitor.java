@@ -38,6 +38,7 @@ final class SerializationVisitor implements VisitorImpl<Void> {
     }
 
     static final class SerializationException extends RuntimeException {
+        public final static long serialVersionUID = -1;
         final IOException io;
 
         SerializationException(IOException io) {
@@ -239,8 +240,8 @@ final class SerializationVisitor implements VisitorImpl<Void> {
     }
 
     @Override
-    public Void visit(VoidReturn n) {
-        writeNodeStart("VoidReturn", 0);
+    public Void visit(Exit n) {
+        writeNodeStart("Exit", 0);
         return null;
     }
 

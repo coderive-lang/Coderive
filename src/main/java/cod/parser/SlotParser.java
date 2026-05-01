@@ -13,71 +13,49 @@ public class SlotParser {
     private final BaseParser parser;
     private final ExpressionParser exprParser;
     
-    // Constructor for when called from ExpressionParser
     public SlotParser(ExpressionParser parser) {
         this.parser = parser;
         this.exprParser = parser;
     }
     
-    // Constructor for when called from StatementParser
     public SlotParser(StatementParser parser) {
         this.parser = parser;
         this.exprParser = parser.expressionParser;
     }
     
-    // Constructor for when called from DeclarationParser
     public SlotParser(DeclarationParser parser) {
         this.parser = parser;
         this.exprParser = parser.getStatementParser().expressionParser;
     }
     
     /**
-     * Parse slot contract: :: name: type, name: type
+     * Predictive Slot Contract parsing (LL(0..2)).
      */
     public List<Slot> parseSlotContract() {
         parser.expect(DOUBLE_COLON);
-        
         List<Slot> slots = new ArrayList<Slot>();
         
-        boolean firstSlot = true;
         boolean isNamedMode = false;
         int index = 0;
         
+        // Use LL(0..2) window check to decide the parsing style
+        if (parser.match(ID, COLON)) {
+            isNamedMode = true;
+        }
+
         do {
             String name;
             String type;
             Token nameToken = null;
             
-            if (firstSlot) {
-                if (parser.is(parser.now(), ID)) {
-                    isNamedMode = true;
-                    nameToken = parser.now();
-                    name = parser.expect(ID).getText();
-                    parser.expect(COLON);
-                    type = parser.parseTypeReference();
-                } else {
-                    isNamedMode = false;
-                    name = String.valueOf(index);
-                    type = parser.parseTypeReference();
-                }
-                firstSlot = false;
+            if (isNamedMode) {
+                nameToken = parser.now();
+                name = parser.expect(ID).getText();
+                parser.expect(COLON);
+                type = parser.parseTypeReference();
             } else {
-                if (isNamedMode) {
-                    if (!parser.is(parser.now(), ID)) {
-                        throw parser.error("Mixed slot declaration styles not allowed. Expected name for slot.");
-                    }
-                    nameToken = parser.now();
-                    name = parser.expect(ID).getText();
-                    parser.expect(COLON);
-                    type = parser.parseTypeReference();
-                } else {
-                    if (parser.is(parser.now(), ID)) {
-                        throw parser.error("Mixed slot declaration styles not allowed. Found name '" +
-                            parser.now().getText() + "' in unnamed slot list.");
-                    }
-                    name = String.valueOf(index);
-                    type = parser.parseTypeReference();
-                }
+                name = String.valueOf(index);
+                type = parser.parseTypeReference();
             }
             
             slots.add(ASTFactory.createSlot(type, name, nameToken));
@@ -87,102 +65,59 @@ public class SlotParser {
         
         return slots;
     }
-    
-    /**
-     * Parse a slot assignments list.
-     *
-     * @return parsed slot assignments in declaration order
-     */
-    public List<SlotAssignment> parseSlotAssignments() {
-        List<SlotAssignment> assignments = new ArrayList<SlotAssignment>();
-        
-        // Parse first assignment
-        assignments.add(parseSingleSlotAssignment());
-        
-        // Parse additional assignments after commas
-        while (parser.consume(COMMA)) {
-            assignments.add(parseSingleSlotAssignment());
-        }
-        
-        return assignments;
-    }
 
     /**
-     * Parse parenthesized slot assignments: ~>(name: expr, expr)
-     */
-    public List<SlotAssignment> parseParenthesizedSlotAssignments(Token tildeArrowToken) {
-        parser.expect(LPAREN);
-        if (parser.is(parser.now(), RPAREN)) {
-            throw parser.error("~> requires at least one return value assignment", tildeArrowToken);
-        }
-        List<SlotAssignment> assignments = parseSlotAssignments();
-        parser.expect(RPAREN);
-        if (parser.is(parser.now(), PLUS, MINUS, MUL, DIV, MOD, EQ, NEQ, GT, LT, GTE, LTE)) {
-            throw parser.error(
-                "Invalid trailing operation after '~>(...)'. Wrap the complete expression " +
-                "including the operator inside '~>(...)', for example '~>((a + b) * c)' " +
-                "instead of '~>(a + b) * c'.",
-                parser.now());
-        }
-        return assignments;
-    }
-    
-    /**
-     * Parse a single slot assignment
+     * LL(0..2) Slot Assignment check.
      */
     public SlotAssignment parseSingleSlotAssignment() {
         String slotName = null;
         Expr value;
         Token colonToken = null;
         
-        if (parser.is(parser.now(), ID)) {
-            Token afterId = parser.next();
-            if (parser.is(afterId, COLON)) {
-                slotName = parser.expect(ID).getText();
-                colonToken = parser.now();
-                parser.expect(COLON);
-                value = exprParser.parseExpr();
-            } else {
-                slotName = null;
-                value = exprParser.parseExpr();
-            }
+        // Predictive check: Is it 'name: value' or just 'value'?
+        if (parser.match(ID, COLON)) {
+            slotName = parser.expect(ID).getText();
+            colonToken = parser.now();
+            parser.expect(COLON);
+            value = exprParser.parseExpr();
         } else {
-            slotName = null;
             value = exprParser.parseExpr();
         }
         
         return ASTFactory.createSlotAsmt(slotName, value, colonToken);
     }
+
+    public List<SlotAssignment> parseSlotAssignments() {
+        List<SlotAssignment> assignments = new ArrayList<SlotAssignment>();
+        assignments.add(parseSingleSlotAssignment());
+        while (parser.consume(COMMA)) {
+            assignments.add(parseSingleSlotAssignment());
+        }
+        return assignments;
+    }
+
+    public List<SlotAssignment> parseParenthesizedSlotAssignments(Token tildeArrowToken) {
+        parser.expect(LPAREN);
+        if (parser.is(RPAREN)) {
+            throw parser.error("~> requires at least one return value assignment", tildeArrowToken);
+        }
+        List<SlotAssignment> assignments = parseSlotAssignments();
+        parser.expect(RPAREN);
+        return assignments;
+    }
     
-    /**
-     * Parse slot assignments and wrap appropriately
-     */
     public Stmt parseSlotAssignmentsAsStmt(Token tildeArrowToken) {
         List<SlotAssignment> assignments = parseParenthesizedSlotAssignments(tildeArrowToken);
-        
         if (assignments.size() == 1) {
             return assignments.get(0);
         }
         return ASTFactory.createMultipleSlotAsmt(assignments, tildeArrowToken);
     }
     
-    /**
-     * Validate that assignments match contract
-     */
     public void validateSlotCount(List<Slot> contract, List<SlotAssignment> assignments, Token errorToken) {
-        if (contract == null || contract.isEmpty()) {
-            return;
-        }
-        
-        int contractSize = contract.size();
-        int assignmentSize = assignments.size();
-        
-        if (contractSize != assignmentSize) {
-            throw parser.error(
-                "Slot contract expects " + contractSize + " return value(s), but " +
-                assignmentSize + " provided in ~> assignment",
-                errorToken
-            );
+        if (contract != null && !contract.isEmpty() && contract.size() != assignments.size()) {
+            throw parser.error("Slot contract expects " + contract.size() + 
+                " values, but " + assignments.size() + " provided.", errorToken);
         }
     }
 }

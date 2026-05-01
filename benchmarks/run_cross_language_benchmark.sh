@@ -71,10 +71,9 @@ echo "Expected checksum: ${EXPECTED_CHECKSUM}"
 echo
 
 # Build Coderive runtime for benchmark execution.
-echo "[setup] compiling Coderive Java runtime..."
-rm -rf "$WORK_DIR/coderive-java" "$WORK_DIR/java-bin" "$WORK_DIR/c-bin" "$WORK_DIR/cpp-bin" "$WORK_DIR/rust-bin"
-mkdir -p "$WORK_DIR/coderive-java" "$WORK_DIR/java-bin"
-javac -d "$WORK_DIR/coderive-java" $(find "$ROOT_DIR/src/main/java" -name '*.java')
+echo "[setup] compiling benchmark binaries..."
+rm -rf "$WORK_DIR/java-bin" "$WORK_DIR/c-bin" "$WORK_DIR/cpp-bin" "$WORK_DIR/rust-bin"
+mkdir -p "$WORK_DIR/java-bin"
 
 # Build language-specific binaries where toolchains exist.
 if has_cmd javac; then
@@ -104,9 +103,6 @@ fi
 echo
 echo "Language | Median ms"
 echo "---------|----------"
-
-run_many "Coderive" env COD_BENCHMARK_MODE=true java -cp "$WORK_DIR/coderive-java" cod.runner.CommandRunner \
-  "$BENCH_DIR/coderive/CrossLanguageBenchmark.cod" --quiet | awk -F'|' '{printf "%-8s | %s\n", $1, $2}'
 
 if [[ -f "$WORK_DIR/java-bin/CrossLanguageBenchmark.class" ]]; then
   run_many "Java" java -cp "$WORK_DIR/java-bin" CrossLanguageBenchmark | awk -F'|' '{printf "%-8s | %s\n", $1, $2}'

@@ -3,45 +3,50 @@ unit test.linearrecurrenceoptimization
 share main() {
     out("=== Linear recurrence optimization ===")
     start := timer()
-    limit := 90
 
-    fib := [0 to limit]
+    fib := [0 to 2000]
     fib[0] = 0
     fib[1] = 1
-    for i of [2 to limit] {
+    for i of [2 to 2000] {
         fib[i] = fib[i-1] + fib[i-2]
     }
     out("fib-metadata=" + fib)
     out("fib[10]=" + fib[10] + " expected=55")
     out("fib[20]=" + fib[20] + " expected=6765")
     out("fib[30]=" + fib[30] + " expected=832040")
-    out("fib[90]=" + fib[90] + " expected=2880067194370816120")
+    out("fib[100]=" + fib[100] + " expected=354224848179261915075")
+    out("fib[500]=" + fib[500])
+    out("fib[1000]=" + fib[1000])
+    out("fib[1500]=" + fib[1500])
+    out("fib[1999]=" + fib[1999])
+    out("fib[2000]=" + fib[2000])
 
-    jac := [0 to limit]
+    jac := [0 to 2000]
     jac[0] = 0
     jac[1] = 1
-    for i of [2 to limit] {
+    for i of [2 to 2000] {
         jac[i] = jac[i-1] + 2 * jac[i-2]
     }
     out("jac[10]=" + jac[10] + " expected=341")
     out("jac[20]=" + jac[20] + " expected=349525")
 
-    shift := [0 to limit]
+    shift := [0 to 2000]
     shift[0] = 0
     shift[1] = 1
-    for i of [2 to limit] {
+    for i of [2 to 2000] {
         shift[i] = shift[i-1] + shift[i-2] + 5
     }
     out("shift[2]=" + shift[2] + " expected=6")
     out("shift[3]=" + shift[3] + " expected=12")
     out("shift[10]=" + shift[10] + " expected=495")
 
-    ramp := [0 to limit]
+    ramp := [0 to 2000]
     ramp[0] = 1
-    for i of [1 to limit] {
+    for i of [1 to 2000] {
         ramp[i] = ramp[i-1] + 7
     }
     out("ramp[10]=" + ramp[10] + " expected=71")
-    out("ramp[90]=" + ramp[90] + " expected=631")
+    out("ramp[1000]=" + ramp[1000] + " expected=7001")
+    out("ramp[2000]=" + ramp[2000] + " expected=14001")
     out("elapsed_ms=" + (timer() - start))
 }

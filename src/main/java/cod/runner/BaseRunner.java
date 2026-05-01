@@ -9,10 +9,7 @@ import cod.interpreter.Index;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.io.File;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 import cod.lexer.*;
 import cod.parser.MainParser;
@@ -79,15 +76,23 @@ public abstract class BaseRunner {
         DebugSystem.debug(LOG_TAG, "Source length: " + sourceCode.length() + " chars");
         DebugSystem.debug(PARSER, "Tokenizing...");
         
+        DebugSystem.startTimer(DebugSystem.Level.INFO, "lexer");
+        
         MainLexer lexer = new MainLexer(sourceCode);
         List<Token> tokens = lexer.tokenize();
+        
+        DebugSystem.stopTimer("lexer");
 
         DebugSystem.debug(PARSER, "Generated " + tokens.size() + " tokens");
         
         DebugSystem.debug(PARSER, "Parsing...");
         
+        DebugSystem.startTimer(DebugSystem.Level.INFO, "parser");
+        
         MainParser parser = new MainParser(tokens, interpreter);
         Program ast = parser.parseProgram();
+        
+        DebugSystem.stopTimer("parser");
         
         DebugSystem.debug(PARSER, "Parsing completed successfully");
        
@@ -155,11 +160,11 @@ public abstract class BaseRunner {
         return processArgs(args, defaultInputFilename, null);
     }
     
-    // ========== INDEX GENERATION METHODS ==========
+    // ========== PROGRESSIVE INDEX GENERATION ==========
     
     /**
-     * Generate indexes for all units in the program.
-     * This should be called before execution to enable O(1) import resolution.
+     * Generate index for the parsed program only (progressive, no directory scan).
+     * This should be called after parsing to record the classes found.
      * 
      * @param ast the parsed program AST
      * @param interpreter the interpreter instance
@@ -170,228 +175,48 @@ public abstract class BaseRunner {
             return;
         }
         
-        DebugSystem.debug("INDEX", "=== Starting index generation ===");
+        DebugSystem.debug("INDEX", "=== Progressive index generation ===");
         
         ImportResolver resolver = interpreter.getImportResolver();
         String srcMainRoot = resolver.getSrcMainRoot();
         
         if (srcMainRoot == null) {
             DebugSystem.debug("INDEX", "No src/main root found, skipping index generation");
-            DebugSystem.debug("INDEX", "Current file directory: " + resolver.getCurrentFileDirectory());
             return;
         }
         
-        DebugSystem.debug("INDEX", "Using src/main root: " + srcMainRoot);
-        
-        // Generate index for the main unit
-        if (ast.unit.name != null && !ast.unit.name.equals("default")) {
-            generateIndexForUnit(ast.unit.name, srcMainRoot, resolver);
-        }
-        
-        // Generate indexes for imported units
-        if (ast.unit.imports != null && ast.unit.imports.imports != null) {
-            DebugSystem.debug("INDEX", "Processing imports: " + ast.unit.imports.imports);
-            
-            for (String importName : ast.unit.imports.imports) {
-                int lastDot = importName.lastIndexOf('.');
-                if (lastDot > 0) {
-                    String unitName = importName.substring(0, lastDot);
-                    DebugSystem.debug("INDEX", "Generating index for imported unit: " + unitName);
-                    generateIndexForUnit(unitName, srcMainRoot, resolver);
-                }
+        // Instead of scanning directories, collect from already-parsed AST
+        String unitName = ast.unit.name;
+        if (unitName != null && !unitName.equals("default")) {
+            Index index = Index.load(unitName);
+            if (index == null) {
+                index = new Index(unitName);
             }
+            
+            // Add classes from this file only
+            String currentFileName = new File(interpreter.getCurrentFilePath()).getName();
+            for (Type type : ast.unit.types) {
+                index.add(type.name, currentFileName);
+            }
+            index.markParsed(currentFileName);
+            index.save();
+            
+            DebugSystem.debug("INDEX", "Updated index for unit: " + unitName + 
+                             " with " + index.size() + " classes from " + currentFileName);
         }
         
-        // Also generate indexes for any units found in the loaded programs cache
-        for (String unitName : resolver.getLoadedImports()) {
-            generateIndexForUnit(unitName, srcMainRoot, resolver);
-        }
-        
-        DebugSystem.debug("INDEX", "=== Index generation complete ===");
-        
-        // Log cache statistics
-        if (DebugSystem.getLevel().compareTo(DebugSystem.Level.DEBUG) >= 0) {
-            DebugSystem.debug("INDEX", "Import resolver cache stats: " + resolver.getCacheStats());
-        }
+        DebugSystem.debug("INDEX", "=== Index generation complete (progressive) ===");
     }
     
     /**
-     * Generate index for a specific unit.
-     * 
-     * @param unitName the name of the unit
-     * @param srcMainRoot the root src/main directory path
+     * Get the current file name from interpreter
      */
-    private void generateIndexForUnit(String unitName, String srcMainRoot, ImportResolver resolver) {
-        if (unitName == null || unitName.isEmpty()) {
-            return;
-        }
-        String unitPath = resolveUnitPath(unitName, srcMainRoot);
-        if (unitPath == null) {
-            DebugSystem.debug("INDEX", "Unit directory does not exist for unit: " + unitName);
-            return;
-        }
-        
-        // Check if index exists and is up to date
-        Index index = Index.load(unitName);
-        boolean needsUpdate = (index == null || index.isStale(unitPath));
-        
-        if (needsUpdate) {
-            DebugSystem.debug("INDEX", "Generating fresh index for unit: " + unitName);
-            index = new Index(unitName);
-            
-            if (index.refresh(unitPath)) {
-                if (index.save()) {
-                    DebugSystem.debug("INDEX", "Generated index for unit: " + unitName + 
-                                     " (" + index.size() + " classes)");
-                    
-                    // Log class names for debugging
-                    if (DebugSystem.getLevel().compareTo(DebugSystem.Level.TRACE) >= 0) {
-                        DebugSystem.trace("INDEX", "Classes in " + unitName + ": " + index.getClassNames());
-                    }
-                } else {
-                    DebugSystem.warn("INDEX", "Failed to save index for unit: " + unitName);
-                }
-            } else {
-                DebugSystem.debug("INDEX", "No .cod files found in unit: " + unitName);
-            }
-        } else {
-            DebugSystem.debug("INDEX", "Index is up to date for unit: " + unitName + 
-                             " (" + index.size() + " classes)");
-        }
-    }
-
-    private String resolveUnitPath(String unitName, String srcMainRoot) {
-        Set<String> candidates = new LinkedHashSet<String>();
-        String unitDirectory = unitName.replace('.', '/');
-        String overrideDirectory = getStandardOverrideDirectory(unitName);
-        addPathCandidate(candidates, srcMainRoot, unitDirectory);
-        addPathCandidate(candidates, srcMainRoot, overrideDirectory);
-
-        String demoSiblingRoot = getDemoSiblingRoot(srcMainRoot);
-        addPathCandidate(candidates, demoSiblingRoot, unitDirectory);
-        addPathCandidate(candidates, demoSiblingRoot, overrideDirectory);
-
-        List<String> missing = new ArrayList<String>();
-        for (String candidate : candidates) {
-            File dir = new File(candidate);
-            if (dir.exists() && dir.isDirectory()) {
-                return candidate;
-            }
-            missing.add(candidate);
-        }
-
-        DebugSystem.debug("INDEX", "Checked unit paths for " + unitName + ": " + missing);
-        return null;
-    }
-
-    private void addPathCandidate(Set<String> candidates, String basePath, String relativePath) {
-        if (basePath == null || basePath.isEmpty() || relativePath == null || relativePath.isEmpty()) {
-            return;
-        }
-        candidates.add(basePath + "/" + relativePath);
-    }
-
-    private String getDemoSiblingRoot(String srcMainRoot) {
-        if (srcMainRoot == null || srcMainRoot.isEmpty()) {
-            return null;
-        }
-        File srcMain = new File(srcMainRoot);
-        File srcDir = srcMain.getParentFile();
-        File srcHolder = srcDir != null ? srcDir.getParentFile() : null;
-        if (srcHolder != null && "demo".equals(srcHolder.getName())) {
-            File sibling = srcHolder.getParentFile();
-            if (sibling != null) {
-                return sibling.getAbsolutePath();
-            }
+    protected String getCurrentFileName(Interpreter interpreter) {
+        String filePath = interpreter.getCurrentFilePath();
+        if (filePath != null) {
+            return new File(filePath).getName();
         }
         return null;
-    }
-
-    private String getStandardOverrideDirectory(String unitName) {
-        if ("scimath.distribution".equals(unitName)) {
-            return "std/scimath/distribution";
-        }
-        return null;
-    }
-    
-    /**
-     * Generate index for a unit using a specific path (alternative to using srcMainRoot).
-     * 
-     * @param unitName the name of the unit
-     * @param unitPath the absolute path to the unit directory
-     */
-    protected void generateIndexForUnitWithPath(String unitName, String unitPath) {
-        if (unitName == null || unitName.isEmpty()) {
-            return;
-        }
-        
-        if (unitPath == null || unitPath.isEmpty()) {
-            return;
-        }
-        
-        File unitDir = new File(unitPath);
-        
-        if (!unitDir.exists() || !unitDir.isDirectory()) {
-            DebugSystem.debug("INDEX", "Invalid unit path: " + unitPath);
-            return;
-        }
-        
-        Index index = Index.load(unitName);
-        boolean needsUpdate = (index == null || index.isStale(unitPath));
-        
-        if (needsUpdate) {
-            DebugSystem.debug("INDEX", "Generating index for unit: " + unitName + " at " + unitPath);
-            index = new Index(unitName);
-            
-            if (index.refresh(unitPath)) {
-                index.save();
-                DebugSystem.debug("INDEX", "Generated index for unit: " + unitName + 
-                                 " (" + index.size() + " classes)");
-            }
-        } else {
-            DebugSystem.debug("INDEX", "Index up to date for unit: " + unitName);
-        }
-    }
-    
-    /**
-     * Force regenerate all indexes in the project.
-     * This is useful after significant code changes.
-     * 
-     * @param srcMainRoot the root src/main directory path
-     */
-    protected void regenerateAllIndexes(String srcMainRoot) {
-        if (srcMainRoot == null || srcMainRoot.isEmpty()) {
-            DebugSystem.debug("INDEX", "Cannot regenerate: no src/main root");
-            return;
-        }
-        
-        File rootDir = new File(srcMainRoot);
-        if (!rootDir.exists() || !rootDir.isDirectory()) {
-            DebugSystem.debug("INDEX", "Cannot regenerate: src/main root not found: " + srcMainRoot);
-            return;
-        }
-        
-        DebugSystem.debug("INDEX", "=== Regenerating all indexes in: " + srcMainRoot + " ===");
-        
-        File[] units = rootDir.listFiles();
-        if (units != null) {
-            int generated = 0;
-            for (File unit : units) {
-                if (unit.isDirectory()) {
-                    String unitName = unit.getName();
-                    Index index = new Index(unitName);
-                    if (index.refresh(unit.getAbsolutePath())) {
-                        if (index.save()) {
-                            generated++;
-                            DebugSystem.debug("INDEX", "Regenerated index for: " + unitName);
-                        }
-                    }
-                }
-            }
-            DebugSystem.debug("INDEX", "Regenerated " + generated + " indexes");
-        }
-        
-        DebugSystem.debug("INDEX", "=== Index regeneration complete ===");
     }
     
     /**

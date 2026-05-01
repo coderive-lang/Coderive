@@ -1,3 +1,1 @@
-unit test.helloworld (main: this)
-
 out("Hello World!")
