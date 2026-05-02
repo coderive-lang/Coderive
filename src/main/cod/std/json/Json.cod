@@ -35,7 +35,7 @@ share JsonValue {
     }
 
     share add(item: JsonValue) {
-        if this.kind != 4 { return }
+        if this.kind != 4 { fin }
         idx: int = this.arrayData.size
         arrayData[idx] = item
     }
@@ -48,11 +48,11 @@ share JsonValue {
     }
 
     share set(key: text, value: JsonValue) {
-        if this.kind != 5 { return }
+        if this.kind != 5 { fin }
         for i of 0 to this.objectKeys.size - 1 {
             if this.objectKeys[i] == key {
                 objectValues[i] = value
-                return
+                fin
             }
         }
         idx: int = this.objectKeys.size
@@ -262,41 +262,41 @@ share Json {
                 if Json.isUnicodeEscapeAt(raw, idx) {
                     outText = outText + raw[idx to idx + 5]
                     idx = idx + 6
-                    continue
+                    skip
                 }
                 outText = outText + "\\\\"
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\"" {
                 outText = outText + "\\\""
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\n" {
                 outText = outText + "\\n"
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\r" {
                 outText = outText + "\\r"
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\t" {
                 outText = outText + "\\t"
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\b" {
                 outText = outText + "\\b"
                 idx = idx + 1
-                continue
+                skip
             }
             if ch == "\f" {
                 outText = outText + "\\f"
                 idx = idx + 1
-                continue
+                skip
             }
             outText = outText + ch
             idx = idx + 1
@@ -491,14 +491,14 @@ share JsonParser {
                 esc := this.source[this.index]
                 index = this.index + 1
 
-                if esc == "\"" { outText = outText + "\"" continue }
-                if esc == "\\" { outText = outText + "\\" continue }
-                if esc == "/" { outText = outText + "/" continue }
-                if esc == "b" { outText = outText + "\b" continue }
-                if esc == "f" { outText = outText + "\f" continue }
-                if esc == "n" { outText = outText + "\n" continue }
-                if esc == "r" { outText = outText + "\r" continue }
-                if esc == "t" { outText = outText + "\t" continue }
+                if esc == "\"" { outText = outText + "\"" skip }
+                if esc == "\\" { outText = outText + "\\" skip }
+                if esc == "/" { outText = outText + "/" skip }
+                if esc == "b" { outText = outText + "\b" skip }
+                if esc == "f" { outText = outText + "\f" skip }
+                if esc == "n" { outText = outText + "\n" skip }
+                if esc == "r" { outText = outText + "\r" skip }
+                if esc == "t" { outText = outText + "\t" skip }
 
                 if esc == "u" {
                     firstUnit := this.parseHex4At(this.index)
@@ -522,7 +522,7 @@ share JsonParser {
                         }
                         index = this.index + 4
                         outText = outText + firstText + "\\u" + Json.hex4(secondUnit)
-                        continue
+                        skip
                     }
 
                     if Json.isLowSurrogate(firstUnit) {
@@ -530,7 +530,7 @@ share JsonParser {
                     }
 
                     outText = outText + firstText
-                    continue
+                    skip
                 }
 
                 ~> (JsonValue.makeError("invalid escape sequence \\" + esc + " at index " + (this.index - 1)))
@@ -627,7 +627,7 @@ share JsonParser {
                 if all[this.index < this.source.length, this.source[this.index] == "]"] {
                     ~> (JsonValue.makeError("trailing comma in array at index " + this.index))
                 }
-                continue
+                skip
             }
 
             if ch == "]" {
@@ -683,7 +683,7 @@ share JsonParser {
                 if all[this.index < this.source.length, this.source[this.index] == "\}"] {
                     ~> (JsonValue.makeError("trailing comma in object at index " + this.index))
                 }
-                continue
+                skip
             }
 
             if ch == "\}" {
@@ -699,13 +699,13 @@ share JsonParser {
 
     share skipWhitespace() {
         for n of this.index to this.source.length {
-            if this.index >= this.source.length { return }
+            if this.index >= this.source.length { fin }
             ch := this.source[this.index]
             if any[ch == " ", ch == "\n", ch == "\r", ch == "\t"] {
                 index = this.index + 1
-                continue
+                skip
             }
-            return
+            fin
         }
     }
 

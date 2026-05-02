@@ -789,7 +789,7 @@ public void run(Object entryPoint) {
         }
       }
       DebugSystem.methodExit("main", null);
-    } catch (EarlyExitException e) {
+    } catch (EarlyFinException e) {
       DebugSystem.methodExit("main", null);
     } catch (ProgramError e) {
       throw e;
@@ -939,7 +939,7 @@ public void run(Object entryPoint) {
           }
         }
       }
-    } catch (EarlyExitException e) {
+    } catch (EarlyFinException e) {
       // Normal exit
     } catch (ProgramError e) {
       throw e;
@@ -1151,7 +1151,7 @@ public Object evalMethodCall(
                 }
             }
         }
-    } catch (EarlyExitException e) {
+    } catch (EarlyFinException e) {
     } catch (ProgramError e) {
         throw e;
     } catch (Exception e) {

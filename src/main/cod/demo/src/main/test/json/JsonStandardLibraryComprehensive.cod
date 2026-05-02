@@ -6,7 +6,7 @@ share JsonStandardLibraryComprehensive {
     share check(label: text, actual: text, expected: text) {
         if actual == expected {
             out("PASS " + label)
-            return
+            fin
         }
         out("FAIL " + label)
         out("  actual:   " + actual)
@@ -16,7 +16,7 @@ share JsonStandardLibraryComprehensive {
     share checkBool(label: text, actual: bool, expected: bool) {
         if actual == expected {
             out("PASS " + label)
-            return
+            fin
         }
         out("FAIL " + label)
         out("  actual:   " + actual)
