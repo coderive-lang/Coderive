@@ -69,7 +69,7 @@ public class TokenSkipper {
     while (!is(EOF)) {
       Token t = now();
 
-      if (any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, EXIT))) {
+      if (any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, FIN))) {
         break;
       }
 
@@ -126,7 +126,7 @@ public class TokenSkipper {
 
       if (braceDepth == 0 && parenDepth == 0 && bracketDepth == 0) {
         if (is(t, COMMA)) return;
-        if (is(t, IF, FOR, EXIT, ELSE, ELIF, SHARE, LOCAL, UNIT)) return;
+        if (is(t, IF, FOR, FIN, ELSE, ELIF, SHARE, LOCAL, UNIT)) return;
       }
 
       consume();
@@ -191,7 +191,7 @@ public class TokenSkipper {
 
   private boolean isStmtEnd() {
     Token t = now();
-    return any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, EXIT), is(t, EOF));
+    return any(is(t, RBRACE), is(t, ELSE, ELIF, IF, FOR, FIN), is(t, EOF));
   }
 
   public void slotContract() {

@@ -49,7 +49,7 @@ public interface VisitorImpl<T> {
 
   T visit(Range n);
 
-  T visit(Exit n);
+  T visit(Fin n);
 
   T visit(Tuple n);
 

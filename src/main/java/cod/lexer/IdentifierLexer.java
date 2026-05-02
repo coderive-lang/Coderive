@@ -86,14 +86,6 @@ public class IdentifierLexer {
             }
         }
 
-        if (matchesExactly(input, startPos, length, "continue")) {
-            return Token.createKeyword(input, startPos, length, startLine, startCol, Keyword.SKIP);
-        }
-
-        if (matchesExactly(input, startPos, length, "return")) {
-            return Token.createKeyword(input, startPos, length, startLine, startCol, Keyword.EXIT);
-        }
-        
         if (extractionMode) extractedIdentifiers.add(new String(input, startPos, length));
         return Token.createIdentifier(input, startPos, length, startLine, startCol);
     }

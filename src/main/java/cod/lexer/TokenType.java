@@ -52,7 +52,7 @@ public enum TokenType {
     BUILTIN,
     ALL,
     ANY,
-    EXIT,
+    FIN,
     NONE,
     TRUE,
     FALSE,

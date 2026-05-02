@@ -158,7 +158,9 @@ public class MainLexer implements LexerSource {
             if (c < 128) {
                 if (CharClassifier.IS_DIGIT[c]) return numberLexer.scan();
                 if (CharClassifier.IS_ID_START[c]) return identifierLexer.scan();
-                if (c == '"' || c == '|') return stringLexer.scan();
+                if (c == '"' || (c == '|' && position + 1 < input.length && input[position + 1] == '"')) {
+                    return stringLexer.scan();
+                }
                 if (CharClassifier.IS_SYMBOL_START[c]) return symbolLexer.scan();
             }
             
