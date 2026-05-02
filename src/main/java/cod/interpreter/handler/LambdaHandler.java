@@ -316,7 +316,7 @@ public class LambdaHandler {
             if (lambda.body != null) {
                 dispatcher.visit((Base) lambda.body);
             }
-        } catch (cod.interpreter.exception.EarlyExitException e) {
+        } catch (cod.interpreter.exception.EarlyFinException e) {
             // normal lambda early exit
         } finally {
             dispatcher.popContext();

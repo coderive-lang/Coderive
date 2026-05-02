@@ -557,8 +557,8 @@ public Object visit(Var node) {
     }
 
     @Override
-    public Object visit(Exit node) {
-        throw new EarlyExitException();
+    public Object visit(Fin node) {
+        throw new EarlyFinException();
     }
 
     @Override
@@ -780,8 +780,8 @@ public Object visit(Var node) {
                 } else {
                     throw tailCallSignal;
                 }
-            } catch (EarlyExitException e) {
-                // normal lambda early exit
+            } catch (EarlyFinException e) {
+                // normal lambda early fin
             } finally {
                 popContext();
             }
@@ -1583,8 +1583,8 @@ public Object visit(MethodCall node) {
                 } else {
                     throw tailCallSignal;
                 }
-            } catch (EarlyExitException e) {
-                // Normal exit - method completed
+            } catch (EarlyFinException e) {
+                // Normal fin - method completed
             } catch (ProgramError e) {
                 throw e;
             } catch (Exception e) {

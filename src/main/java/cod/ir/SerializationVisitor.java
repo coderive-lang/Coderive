@@ -240,8 +240,8 @@ final class SerializationVisitor implements VisitorImpl<Void> {
     }
 
     @Override
-    public Void visit(Exit n) {
-        writeNodeStart("Exit", 0);
+    public Void visit(Fin n) {
+        writeNodeStart("Fin", 0);
         return null;
     }
 

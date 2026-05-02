@@ -210,7 +210,7 @@ public class TokenSkipper {
       ifStmt();
     } else if (is(current, FOR)) {
       forStmt();
-    } else if (is(current, EXIT)) {
+    } else if (is(current, FIN)) {
       consume();
     } else if (is(current, SHARE, LOCAL)) {
       if (is(current, ID)) {
