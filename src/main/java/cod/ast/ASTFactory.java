@@ -591,12 +591,12 @@ public class ASTFactory {
     return var;
   }
 
-  public static Exit createExit(Token exitToken) {
-    Exit exit = new Exit();
-    if (exitToken != null) {
-      exit.setSourceSpan(span(exitToken));
+  public static Fin createFin(Token finToken) {
+    Fin fin = new Fin();
+    if (finToken != null) {
+      fin.setSourceSpan(span(finToken));
     }
-    return exit;
+    return fin;
   }
 
   public static ArgumentList createArgumentList(List<Expr> arguments, Token lparenToken) {

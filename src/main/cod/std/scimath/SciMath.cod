@@ -201,7 +201,7 @@ share SciMath {
         ssBetween: int|float = 0
         ssWithin: int|float = 0
         for g of 0 to groups.size - 1 {
-            if groups[g].size == 0 { continue }
+            if groups[g].size == 0 { skip }
             meanG: int|float = 0
             for i of 0 to groups[g].size - 1 {
                 meanG = meanG + groups[g][i]
@@ -251,7 +251,7 @@ share SciMath {
         if n <= 0 { ~> (0) }
         chi2: int|float = 0
         for i of 0 to n - 1 {
-            if expected[i] <= 0 { continue }
+            if expected[i] <= 0 { skip }
             d := observed[i] - expected[i]
             chi2 = chi2 + d * d / expected[i]
         }
@@ -295,7 +295,7 @@ share SciMath {
                 aug[c][j] = aug[c][j] / pivot
             }
             for r of 0 to n - 1 {
-                if r == c { continue }
+                if r == c { skip }
                 factor := aug[r][c]
                 for j of 0 to (2 * n) - 1 {
                     aug[r][j] = aug[r][j] - factor * aug[c][j]

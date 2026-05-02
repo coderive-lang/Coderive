@@ -341,6 +341,7 @@ public final class CodPTACParityRunner extends BaseRunner {
             cleaned = cleaned.replaceFirst("(?i)(.*(?:time|elapsed|duration|latency)[^=]*=)" + NUMBER_REGEX_PATTERN + "$", "$1<TIME>");
             cleaned = cleaned.replaceFirst("(?i)(.*\\btime:\\s*)" + NUMBER_REGEX_PATTERN + "(\\s*ms.*)", "$1<TIME>$2");
             cleaned = cleaned.replaceFirst("(.*:\\s*)" + NUMBER_REGEX_PATTERN + "(\\s*ms)$", "$1<TIME>$2");
+            cleaned = cleaned.replaceFirst("(?i)(.*\\bat\\s+)" + NUMBER_REGEX_PATTERN + "(\\s*ms)", "$1<TIME>$2");
             cleaned = cleaned.replaceFirst("NaturalArray\\[id=\\d+", "NaturalArray[id=<ID>");
             sb.append(cleaned).append("\n");
         }

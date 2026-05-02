@@ -274,7 +274,7 @@ public abstract class BaseParser {
   protected boolean isStmtStart() {
     Token token = now();
     if (token == null) return false;
-    if (is(token, IF, FOR, EXIT, SKIP, BREAK)) return true;
+    if (is(token, IF, FOR, FIN, SKIP, BREAK)) return true;
     if (is(token, TILDE_ARROW)) return true;
 
     if (is(token, ID)) {

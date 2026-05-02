@@ -2,6 +2,34 @@
 
 All notable changes to Coderive are documented in this file.
 
+## [v0.9.6] - Keyword Cleanup & Parity Fix - May 2, 2026
+
+### 🔑 Keyword Rename: `exit` → `fin`
+- Renamed void early-return keyword from `exit` to `fin` throughout the language.
+- `TokenType.Keyword.EXIT` renamed to `TokenType.Keyword.FIN`.
+- AST node `Exit` renamed to `Fin`; exception `EarlyExitException` renamed to `EarlyFinException`.
+- IR serialization tag updated from `"Exit"` to `"Fin"` (no backward compatibility required; pre-release).
+- All parser, printer, lowerer, and visitor references updated accordingly.
+
+### 🚫 Removed Keyword Aliases
+- Removed `continue` → `skip` and `return` → `fin` compatibility aliases from `IdentifierLexer`.
+- Only explicit `skip` and `fin` keywords are now recognized as control-flow statements.
+
+### 📝 Source File Updates
+- Updated all `.cod` demo and standard-library files to use `fin` instead of `exit`/`return` and `skip` instead of `continue`:
+  - `std/json/Json.cod`
+  - `std/scimath/SciMath.cod`
+  - `demo/src/main/test/controlflow/ControlFlow.cod`
+  - `demo/src/main/test/json/JsonStandardLibraryComprehensive.cod`
+
+### ✅ Parity & Java Compatibility
+- Fixed `CodPTACParityRunner` normalize function to handle timing output of the form `"... at <N> ms"` (fixes `BMark.cod` parity mismatch).
+- Verified Java 7 source/target compatibility; all sources compile cleanly with `-source 1.7 -target 1.7`.
+- All parity tests pass after keyword migration.
+
+### 📊 BMark primeCount Baseline (primeCount(5000))
+- Baseline run (PTAC executor, Java 17): `~1280 ms`, checksum `2666668685121930669`.
+
 ## [v0.9.5] - JSON Stabilization - April 18, 2026
 
 ### 🧩 JSON Parser & Serializer Fixes

@@ -2,7 +2,7 @@ package cod.ast.node;
 
 import cod.ast.VisitorImpl;
 
-public class Exit extends Stmt {
+public class Fin extends Stmt {
 
            @Override
         public final <T> T accept(VisitorImpl<T> visitor) {

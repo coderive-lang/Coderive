@@ -111,7 +111,7 @@ public abstract class ASTVisitor<T> implements VisitorImpl<T> {
   }
 
   @Override
-  public T visit(Exit n) {
+  public T visit(Fin n) {
     return n.accept(this);
   }
 
