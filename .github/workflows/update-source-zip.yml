@@ -1,4 +1,4 @@
-name: Update source_.jar
+name: Update source_.zip
 
 on:
   push:
@@ -21,17 +21,17 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      - name: Build source_.jar
-        run: ./gradlew sourceJar
+      - name: Build source_.zip
+        run: ./gradlew sourceZip
 
-      - name: Commit updated source_.jar
+      - name: Commit updated source_.zip
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add source_.jar
+          git add source_.zip
           if git diff --cached --quiet; then
-            echo "source_.jar already up to date — nothing to commit."
+            echo "source_.zip already up to date — nothing to commit."
           else
-            git commit -m "chore: update source_.jar [skip ci]"
+            git commit -m "chore: update source_.zip [skip ci]"
             git push
           fi

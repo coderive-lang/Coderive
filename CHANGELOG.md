@@ -2,7 +2,7 @@
 
 All notable changes to Coderive are documented in this file.
 
-## [v0.9.6] - Keyword Cleanup & Parity Fix - May 2, 2026
+## [v0.9.6] - Runtime & Repo Consolidation - May 3, 2026
 
 ### 🔑 Keyword Rename: `exit` → `fin`
 - Renamed void early-return keyword from `exit` to `fin` throughout the language.
@@ -27,8 +27,21 @@ All notable changes to Coderive are documented in this file.
 - Verified Java 7 source/target compatibility; all sources compile cleanly with `-source 1.7 -target 1.7`.
 - All parity tests pass after keyword migration.
 
-### 📊 BMark primeCount Baseline (primeCount(5000))
-- Baseline run (PTAC executor, Java 17): `~1280 ms`, checksum `2666668685121930669`.
+### 🚀 BMark primeCount Optimization
+- Baseline (naive O(n²)): `~1280 ms` for `primeCount(5000)` on PTAC executor.
+- Optimized `primeCount` in `BMark.cod`: skip even candidates after 2, iterate odd divisors only (step 2), and break early when `divisor * divisor > candidate` (√n bound).
+- Expected speedup: ~8–15× over naive O(n²) for `primeCount(5000)`.
+
+### 📂 Repository Layout Changes
+- Moved `src/main/cod/` → `src/cod/`; `src/main/` now holds only Java implementations.
+- Updated `TestRunner`, `CodPTACParityRunner`, and `IRValidationRunner` hardcoded Android/console paths accordingly.
+- Removed root `examples/` directory; demo programs live in `src/cod/demo/src/main/test/`.
+- Moved `benchmarks/`, `drafts/`, and `suggestions/` into a new `misc/` folder.
+- Updated README: version badge → 0.9.6, Examples → Demo Programs section, all path references refreshed.
+
+### 📦 Source Archive Rename
+- Renamed `source_.jar` → `source_.zip`; archive now contains `cod/` and `src/main/` at the same level.
+- Updated `build.gradle` (`sourceJar` task → `sourceZip` Zip task) and GitHub Actions workflow.
 
 ## [v0.9.5] - JSON Stabilization - April 18, 2026
 

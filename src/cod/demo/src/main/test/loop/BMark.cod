@@ -26,10 +26,17 @@ share CrossLanguageBenchmark {
         for candidate of 2 to limit {
             isPrime: bool = true
             if candidate > 2 {
-                for divisor of 2 to candidate - 1 {
-                    if candidate % divisor == 0 {
-                        isPrime = false
-                        break
+                if candidate % 2 == 0 {
+                    isPrime = false
+                } else {
+                    for divisor of 3 to candidate - 1 by 2 {
+                        if divisor * divisor > candidate {
+                            break
+                        }
+                        if candidate % divisor == 0 {
+                            isPrime = false
+                            break
+                        }
                     }
                 }
             }

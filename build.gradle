@@ -2,11 +2,14 @@
 // Read version from the VERSION file in the repo root
 version = new File("${rootDir}/VERSION").text.trim()
 
-// Packages every file inside src/ into source_.jar as-is (preserving paths)
-task sourceJar(type: Jar) {
-    archiveFileName = 'source_.jar'
+// Packages cod/ and src/main/ into source_.zip (cod/ at the same level as src/main/)
+task sourceZip(type: Zip) {
+    archiveFileName = 'source_.zip'
     destinationDirectory = rootDir
-    from('src') {
-        into 'src'
+    from('src/cod') {
+        into 'cod'
+    }
+    from('src/main') {
+        into 'src/main'
     }
 }

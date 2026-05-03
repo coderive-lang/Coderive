@@ -10,7 +10,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-0.9.5-536af5?style=flat-square&logo=github)](https://github.com/coderive-lang/Coderive/releases)
+[![Version](https://img.shields.io/badge/version-0.9.6-536af5?style=flat-square&logo=github)](https://github.com/coderive-lang/Coderive/releases)
 [![Java](https://img.shields.io/badge/requires-Java%207%2B-ed8b00?style=flat-square&logo=openjdk&logoColor=white)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/license-MIT-f5de53?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/coderive-lang/Coderive?style=flat-square&color=7289da&logo=github)](https://github.com/coderive-lang/Coderive/stargazers)
@@ -29,7 +29,7 @@
 - [Language Features](#language-features)
 - [Latest in src](#latest-in-src)
 - [Validation Snapshot](#validation-snapshot)
-- [Examples](#examples)
+- [Demo Programs](#demo-programs)
 - [Web Playground](#web-playground)
 - [License](#license)
 - [Contact](#contact)
@@ -172,7 +172,7 @@ source ~/.bashrc
 Then run your first program:
 
 ```bash
-coderive examples/hello.cod
+coderive hello.cod
 ```
 
 ---
@@ -182,7 +182,7 @@ coderive examples/hello.cod
 If you prefer not to use the installer, run programs directly with Java:
 
 ```bash
-java -cp docs/assets/Coderive.jar cod.runner.CommandRunner examples/hello.cod
+java -cp docs/assets/Coderive.jar cod.runner.CommandRunner hello.cod
 ```
 
 You can alias this for convenience:
@@ -353,7 +353,7 @@ Recent `src/**/*.cod` programs and std modules now showcase:
 
 ## Validation Snapshot
 
-Current demo validation status from `src/main/cod/demo/src/main/test`:
+Current demo validation status from `src/cod/demo/src/main/test`:
 
 - `CodP-TAC parity runner` (`cod.runner.CodPTACParityRunner`, excluding `*Invalid*.cod`): **56/56 passed**.
 - Direct `CommandRunner` sweep for non-invalid demos: **49/49 passed** (with required stdin fixtures for input-driven demos such as `Interactive.cod`, `IO.cod`, and `Parity.cod`).
@@ -367,26 +367,22 @@ Checked invalid demos (`*Invalid*.cod`) confirm currently unsupported/invalid pa
 
 ---
 
-## Examples
+## Demo Programs
 
-The [`examples/`](examples/) directory has ready-to-run programs:
+Runnable demos live in [`src/cod/demo/src/main/test/`](src/cod/demo/src/main/test/):
 
-| File | What it shows |
-|------|--------------|
-| [`hello.cod`](examples/hello.cod) | String interpolation, input |
-| [`fizzbuzz.cod`](examples/fizzbuzz.cod) | `all[]` logic, `for…of` loops |
-| [`calculator.cod`](examples/calculator.cod) | Multi-return slots, `any[]` validation |
-| [`smart_loops.cod`](examples/smart_loops.cod) | Additive / multiplicative / divisive steps, inline formula |
-| [`lazy_arrays.cod`](examples/lazy_arrays.cod) | O(1) NaturalArray, formula loops, range indexing, lexicographic ranges |
+| Category | What it shows |
+|----------|--------------|
+| [`helloworld/`](src/cod/demo/src/main/test/helloworld/) | String interpolation, modules, static entry |
+| [`controlflow/`](src/cod/demo/src/main/test/controlflow/) | `if`/`elif`/`else`, `skip`, `break`, `fin` |
+| [`loop/`](src/cod/demo/src/main/test/loop/) | Loop patterns, benchmark (`BMark.cod`) |
+| [`lambda/`](src/cod/demo/src/main/test/lambda/) | Lambdas, auto-currying, self-call |
+| [`lazyloop/`](src/cod/demo/src/main/test/lazyloop/) | O(1) lazy arrays, formula-optimized loops |
+| [`array/`](src/cod/demo/src/main/test/array/) | Array operations |
+| [`unsafe/`](src/cod/demo/src/main/test/unsafe/) | Unsafe pointers, borrow checker |
+| [`json/`](src/cod/demo/src/main/test/json/) | JSON standard library |
 
-Run any example:
-
-```bash
-coderive examples/fizzbuzz.cod
-coderive examples/calculator.cod
-coderive examples/smart_loops.cod
-coderive examples/lazy_arrays.cod
-```
+Or try everything instantly in the **[Web Playground](https://coderive-lang.github.io/Coderive)** — no install required.
 
 ---
 
