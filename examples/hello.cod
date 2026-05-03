@@ -1,7 +1,0 @@
-// hello.cod — Your first Coderive program
-// Run: coderive examples/hello.cod
-
-name := in(text, "What's your name? ")
-
-out("Hello, {name}! 👋")
-out("Welcome to Coderive — safe, fast, and clear coding.")

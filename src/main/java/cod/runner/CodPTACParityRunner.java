@@ -27,7 +27,7 @@ public final class CodPTACParityRunner extends BaseRunner {
     private static final String DEFAULT_INPUT = buildDefaultInput(DEFAULT_INPUT_LINE_COUNT);
     
     private final String androidPath = "/storage/emulated/0";
-    private final String baseTestPath = "/JavaNIDE/Programming-Language/Coderive/app/src/main/cod/demo/src/main/test/";
+    private final String baseTestPath = "/JavaNIDE/Programming-Language/Coderive/app/cod/demo/src/main/test/";
     
     private static String buildDefaultInput(int lines) {
         StringBuilder sb = new StringBuilder();
