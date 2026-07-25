@@ -2,7 +2,7 @@
 <!-- markdownlint-disable html -->
 <!-- markdownlint-disable no-duplicate-header -->
 
-## ⚠️ Pre-v1.0 — API may change
+**⚠️ Pre-v1.0 — API may change**
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/coderive-lang/Coderive/main/docs/assets/coderive-logo.png" alt="Coderive Logo" width="80%" />
