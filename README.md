@@ -6,6 +6,7 @@
 
 <p>⚠️ Pre-v1.0 — API may change</p>
 
+
   <img src="https://raw.githubusercontent.com/coderive-lang/Coderive/main/docs/assets/coderive-logo.png" alt="Coderive Logo" width="80%" />
   <h3>Safe. Fast. Clear.</h3>
   <p><em>A modern general-purpose programming language built for expressive, safe code.</em></p>
